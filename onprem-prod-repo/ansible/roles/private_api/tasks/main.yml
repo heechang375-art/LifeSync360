@@ -13,6 +13,16 @@
     mode: '0644'
   notify: Restart private-api
 
+- name: Install python3-venv
+  apt:
+    name: python3-venv
+    state: present
+
+- name: Create virtualenv
+  command: python3 -m venv /opt/private-api/venv
+  args:
+    creates: /opt/private-api/venv
+
 - name: Install Python dependencies
   pip:
     name:
@@ -20,7 +30,7 @@
       - uvicorn
       - boto3
       - pymysql
-    executable: pip3
+    virtualenv: /opt/private-api/venv
 
 - name: Deploy Nginx config
   template:

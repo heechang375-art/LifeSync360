@@ -19,6 +19,16 @@
     dest: /opt/tokenization/masking_rules.yml
     mode: '0644'
 
+- name: Install python3-venv
+  apt:
+    name: python3-venv
+    state: present
+
+- name: Create virtualenv
+  command: python3 -m venv /opt/tokenization/venv
+  args:
+    creates: /opt/tokenization/venv
+
 - name: Install Python dependencies
   pip:
     name:
@@ -27,7 +37,7 @@
       - boto3
       - pymysql
       - pydantic
-    executable: pip3
+    virtualenv: /opt/tokenization/venv
 
 - name: Deploy systemd service file
   template:
