@@ -18,12 +18,17 @@ ALLOWED_FIELDS = {'resident_number', 'phone_number', 'account_number', 'card_num
 
 
 def get_db():
-    secret = boto3.client('secretsmanager', region_name=REGION).get_secret_value(SecretId=SECRET_ID)
-    creds = json.loads(secret['SecretString'])
+    db_user = os.environ.get('DB_USER')
+    db_pass = os.environ.get('DB_PASS')
+    if not db_user or not db_pass:
+        secret = boto3.client('secretsmanager', region_name=REGION).get_secret_value(SecretId=SECRET_ID)
+        creds = json.loads(secret['SecretString'])
+        db_user = creds['username']
+        db_pass = creds['password']
     return pymysql.connect(
         host=MYSQL_HOST,
-        user=creds['username'],
-        password=creds['password'],
+        user=db_user,
+        password=db_pass,
         database=DB_NAME,
         cursorclass=pymysql.cursors.DictCursor
     )
