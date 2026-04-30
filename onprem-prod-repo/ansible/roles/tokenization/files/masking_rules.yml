@@ -1,0 +1,8 @@
+fields:
+  - resident_number
+  - phone_number
+  - account_number
+  - card_number
+  - email
+
+algorithm: sha256

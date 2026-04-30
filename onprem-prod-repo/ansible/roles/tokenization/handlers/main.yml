@@ -1,0 +1,6 @@
+---
+- name: Restart tokenization
+  systemd:
+    name: tokenization
+    state: restarted
+    daemon_reload: yes

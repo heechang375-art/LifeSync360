@@ -1,0 +1,47 @@
+---
+- name: Create tokenization directory
+  file:
+    path: /opt/tokenization
+    state: directory
+    mode: '0755'
+    owner: ansible
+
+- name: Deploy token service
+  copy:
+    src: token_service.py
+    dest: /opt/tokenization/token_service.py
+    mode: '0644'
+  notify: Restart tokenization
+
+- name: Deploy masking rules
+  copy:
+    src: masking_rules.yml
+    dest: /opt/tokenization/masking_rules.yml
+    mode: '0644'
+
+- name: Install Python dependencies
+  pip:
+    name:
+      - fastapi
+      - uvicorn
+      - boto3
+      - pymysql
+      - pydantic
+    executable: pip3
+
+- name: Deploy systemd service file
+  template:
+    src: tokenization.service.j2
+    dest: /etc/systemd/system/tokenization.service
+    mode: '0644'
+  notify: Restart tokenization
+
+- name: Reload systemd daemon
+  systemd:
+    daemon_reload: yes
+
+- name: Ensure tokenization service is running
+  systemd:
+    name: tokenization
+    state: started
+    enabled: yes

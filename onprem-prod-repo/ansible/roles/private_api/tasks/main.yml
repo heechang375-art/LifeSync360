@@ -1,0 +1,68 @@
+---
+- name: Create API directory
+  file:
+    path: /opt/private-api
+    state: directory
+    mode: '0755'
+    owner: ansible
+
+- name: Deploy application code
+  copy:
+    src: app.py
+    dest: /opt/private-api/app.py
+    mode: '0644'
+  notify: Restart private-api
+
+- name: Install Python dependencies
+  pip:
+    name:
+      - fastapi
+      - uvicorn
+      - boto3
+      - pymysql
+    executable: pip3
+
+- name: Deploy Nginx config
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/conf.d/private-api.conf
+    mode: '0644'
+  notify: Reload nginx
+
+- name: Deploy systemd service file
+  template:
+    src: private-api.service.j2
+    dest: /etc/systemd/system/private-api.service
+    mode: '0644'
+  notify: Restart private-api
+
+- name: Reload systemd daemon
+  systemd:
+    daemon_reload: yes
+
+- name: Ensure nginx is running
+  systemd:
+    name: nginx
+    state: started
+    enabled: yes
+
+- name: Ensure private-api is running
+  systemd:
+    name: private-api
+    state: started
+    enabled: yes
+
+- name: Deploy ansible trigger script
+  copy:
+    src: trigger_ansible.sh
+    dest: /opt/private-api/trigger_ansible.sh
+    mode: '0755'
+    owner: ansible
+
+- name: Register ansible trigger cron
+  cron:
+    name: Ansible deployment trigger
+    hour: '2'
+    minute: '0'
+    job: /opt/private-api/trigger_ansible.sh >> /var/log/ansible-trigger.log 2>&1
+    user: ansible

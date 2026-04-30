@@ -1,0 +1,110 @@
+---
+- name: Install pymysql (Ansible mysql 모듈 의존성)
+  apt:
+    name: python3-pymysql
+    state: present
+    update_cache: yes
+
+- name: Ensure MySQL is running
+  systemd:
+    name: mysql
+    state: started
+    enabled: yes
+
+- name: Get MySQL credentials from Secrets Manager
+  shell: |
+    aws secretsmanager get-secret-value \
+      --secret-id lifesync/onprem-db \
+      --region ap-northeast-2 \
+      --query SecretString \
+      --output text
+  register: db_secret
+  no_log: true
+  when: mysql_root_password is not defined
+
+- name: Parse DB credentials
+  set_fact:
+    mysql_root_password: "{{ (db_secret.stdout | from_json).root_password }}"
+    mysql_app_password: "{{ (db_secret.stdout | from_json).password }}"
+  no_log: true
+  when: mysql_root_password is not defined
+
+- name: Set MySQL root password
+  mysql_user:
+    name: root
+    host: localhost
+    password: "{{ mysql_root_password }}"
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+    state: present
+  no_log: true
+
+- name: Remove anonymous users
+  mysql_user:
+    name: ''
+    host_all: yes
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+    state: absent
+  no_log: true
+
+- name: Remove test database
+  mysql_db:
+    name: test
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+    state: absent
+  no_log: true
+
+- name: Create lifesync_onprem database
+  mysql_db:
+    name: lifesync_onprem
+    encoding: utf8mb4
+    collation: utf8mb4_unicode_ci
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+    state: present
+
+- name: Create app user
+  mysql_user:
+    name: lifesync
+    host: '192.168.56.%'
+    password: "{{ mysql_app_password }}"
+    priv: 'lifesync_onprem.*:ALL'
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+    state: present
+  no_log: true
+
+- name: Copy schema SQL
+  copy:
+    src: schema.sql
+    dest: /tmp/schema.sql
+    mode: '0644'
+
+- name: Apply schema migration
+  mysql_db:
+    name: lifesync_onprem
+    state: import
+    target: /tmp/schema.sql
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+  no_log: true
+
+- name: Create mysql backup directory
+  file:
+    path: /opt/mysql/backups
+    state: directory
+    mode: '0755'
+
+- name: Copy backup script
+  copy:
+    src: backup.sh
+    dest: /opt/mysql/backup.sh
+    mode: '0755'
+
+- name: Register daily backup cron
+  cron:
+    name: MySQL daily backup
+    hour: '2'
+    minute: '0'
+    job: /opt/mysql/backup.sh

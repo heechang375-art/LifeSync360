@@ -1,0 +1,18 @@
+---
+- name: Deploy MySQL
+  hosts: mysql
+  become: yes
+  roles:
+    - mysql
+
+- name: Deploy Tokenization Service
+  hosts: tokenization
+  become: yes
+  roles:
+    - tokenization
+
+- name: Deploy Private API
+  hosts: private_api
+  become: yes
+  roles:
+    - private_api

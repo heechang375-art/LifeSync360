@@ -1,0 +1,11 @@
+---
+- name: Reload nginx
+  systemd:
+    name: nginx
+    state: reloaded
+
+- name: Restart private-api
+  systemd:
+    name: private-api
+    state: restarted
+    daemon_reload: yes

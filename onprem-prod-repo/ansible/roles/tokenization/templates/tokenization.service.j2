@@ -1,0 +1,16 @@
+[Unit]
+Description=LifeSync360 Tokenization Service
+After=network.target
+
+[Service]
+Type=simple
+User=ansible
+WorkingDirectory=/opt/tokenization
+ExecStart=/usr/local/bin/uvicorn token_service:app --host 0.0.0.0 --port 8000 --workers 2
+Restart=always
+RestartSec=5
+Environment=AWS_DEFAULT_REGION=ap-northeast-2
+Environment=MYSQL_HOST={{ mysql_vm_ip }}
+
+[Install]
+WantedBy=multi-user.target
