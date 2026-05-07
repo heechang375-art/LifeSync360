@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>회원가입 – LifeSync360</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="auth-page">
+    <p class="auth-logo">LifeSync<span>360</span></p>
+    <p class="auth-sub">LS그룹 통합 헬스·금융 플랫폼</p>
+
+    <div class="auth-card">
+        <h2>회원가입</h2>
+        <div class="form-group">
+            <label>이름</label>
+            <input type="text" id="name" placeholder="실명을 입력하세요">
+        </div>
+        <div class="form-group">
+            <label>이메일</label>
+            <input type="email" id="email" placeholder="example@email.com">
+        </div>
+        <div class="form-group">
+            <label>휴대폰 번호</label>
+            <input type="tel" id="phone" placeholder="010-0000-0000">
+        </div>
+        <div class="form-group">
+            <label>주민등록번호</label>
+            <input type="text" id="rrn" placeholder="000000-0000000">
+        </div>
+        <div class="form-group">
+            <label>비밀번호</label>
+            <input type="password" id="password" placeholder="8자 이상 입력하세요">
+        </div>
+        <p class="error-msg" id="error-msg"></p>
+        <button class="btn-primary" id="register-btn">가입하기</button>
+    </div>
+
+    <p class="auth-link">이미 계정이 있으신가요? <a href="{{ url_for('login') }}">로그인</a></p>
+</div>
+
+<script>
+    document.getElementById('register-btn').addEventListener('click', async () => {
+        const payload = {
+            name: document.getElementById('name').value,
+            email: document.getElementById('email').value,
+            phone: document.getElementById('phone').value,
+            rrn: document.getElementById('rrn').value,
+            password: document.getElementById('password').value,
+        };
+        const res = await fetch('/api/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            document.getElementById('error-msg').textContent = data.error;
+            return;
+        }
+        localStorage.setItem('ls_token', data.token);
+        window.location.href = '/consent';
+    });
+</script>
+</body>
+</html>

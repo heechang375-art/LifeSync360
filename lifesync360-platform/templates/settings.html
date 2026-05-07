@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>설정 – LifeSync360</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="app">
+    <header class="header">
+        <div class="header-inner">
+            <button class="back-btn" id="header-back" onclick="handleBack()">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="15 18 9 12 15 6"/>
+                </svg>
+            </button>
+            <span class="header-title" id="header-title">설정</span>
+            <span></span>
+        </div>
+    </header>
+
+    <div class="stab-bar">
+        <button class="stab-btn active" id="stab-settings-btn" onclick="switchStab('settings')">설정</button>
+        <button class="stab-btn" id="stab-points-btn" onclick="switchStab('points')">포인트</button>
+    </div>
+
+    <main class="content">
+
+        <!-- ── 설정 탭 ── -->
+        <div id="stab-settings" class="stab-content">
+
+            <!-- 메인 메뉴 -->
+            <div id="view-main" class="settings-panel">
+                <div class="menu-section">
+                    <div class="menu-item" onclick="showSubView('view-account', '계정 정보')">
+                        <span class="menu-label">계정 정보</span>
+                        <svg class="menu-chevron-icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    </div>
+                    <div class="menu-item" onclick="showSubView('view-grade', '등급 혜택')">
+                        <span class="menu-label">등급 혜택</span>
+                        <svg class="menu-chevron-icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    </div>
+                    <div class="menu-item" onclick="showSubView('view-consent', '데이터 활용 동의')">
+                        <span class="menu-label">데이터 활용 동의</span>
+                        <svg class="menu-chevron-icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    </div>
+                </div>
+                <div class="menu-section">
+                    <button class="btn-logout" id="logout-btn">로그아웃</button>
+                </div>
+            </div>
+
+            <!-- 계정 정보 서브뷰 -->
+            <div id="view-account" class="settings-panel hidden">
+                <div class="settings-card">
+                    <div class="settings-info-row">
+                        <span class="info-label">이름</span>
+                        <span class="info-value" id="s-name">-</span>
+                    </div>
+                    <div class="settings-info-row">
+                        <span class="info-label">이메일</span>
+                        <span class="info-value" id="s-email">-</span>
+                    </div>
+                    <div class="settings-info-row" style="border-bottom:none;">
+                        <span class="info-label">회원번호</span>
+                        <span class="info-value mono" id="s-userid">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 등급 혜택 서브뷰 -->
+            <div id="view-grade" class="settings-panel hidden">
+                <div class="grade-ladder-interactive">
+                    {% for grade, info in grade_benefits.items() %}
+                    <button class="ladder-btn grade-{{ info.color }}" data-grade="{{ grade }}">{{ grade }}</button>
+                    {% endfor %}
+                </div>
+                <div class="settings-card">
+                    <div class="benefit-header">
+                        <span class="grade-badge" id="sel-grade-badge">-</span>
+                        <span class="benefit-desc" id="sel-grade-desc">-</span>
+                    </div>
+                    <ul class="benefit-list" id="sel-benefit-list"></ul>
+                </div>
+                <div id="upgrade-actions-section" style="display:none">
+                    <div class="settings-section-label">등급 업그레이드 가이드</div>
+                    <div class="settings-card" id="upgrade-actions-container" style="padding: 4px 16px;"></div>
+                </div>
+            </div>
+
+            <!-- 데이터 활용 동의 서브뷰 -->
+            <div id="view-consent" class="settings-panel hidden">
+                <div class="settings-card">
+                    <div class="consent-list" style="margin-bottom:0;">
+                        {% for item in consents %}
+                        <div class="consent-item">
+                            <label for="s-{{ item.key }}">{{ item.label }}</label>
+                            <input type="checkbox" id="s-{{ item.key }}" name="{{ item.key }}">
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <button class="btn-outline" id="consent-save-btn" style="margin-top:14px;">변경 저장</button>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ── 포인트 탭 ── -->
+        <div id="stab-points" class="stab-content hidden">
+            <div style="padding: 16px 16px 24px;">
+                <div class="grade-card">
+                    <div class="grade-current">
+                        <span class="grade-label">현재 등급</span>
+                        <span class="grade-name" id="s-grade-name">-</span>
+                    </div>
+                    <div class="grade-progress-bar">
+                        <div class="grade-progress-fill" style="width: {{ points.next_grade_percent }}%"></div>
+                    </div>
+                    <p class="grade-next-info">{{ points.next_grade }}까지 <strong>{{ points.next_grade_points }}P</strong> 남음</p>
+                    <div class="points-total">
+                        <span>보유 포인트</span>
+                        <strong>{{ "{:,}".format(points.balance) }}P</strong>
+                    </div>
+                </div>
+                <div class="history-list">
+                    <p class="history-title">포인트 이력</p>
+                    {% for h in point_history %}
+                    <div class="history-item">
+                        <div class="history-info">
+                            <span class="history-desc">{{ h.desc }}</span>
+                            <span class="history-date">{{ h.date }}</span>
+                        </div>
+                        <span class="history-points {{ h.type }}">{{ h.points }}P</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <nav class="bottom-nav">
+        <button class="nav-btn" onclick="location.href='/'">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                <polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+            <span>홈</span>
+        </button>
+        <button class="nav-btn" onclick="location.href='/'">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
+            <span>추천</span>
+        </button>
+        <button class="nav-btn active">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="8" r="4"/>
+                <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+            </svg>
+            <span>MY</span>
+        </button>
+    </nav>
+</div>
+
+<script>
+    const GRADE_BENEFITS = {{ grade_benefits | tojson }};
+    let currentSubView = null;
+
+    function handleBack() {
+        if (currentSubView) {
+            document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
+            document.getElementById('view-main').classList.remove('hidden');
+            document.getElementById('header-title').textContent = '설정';
+            currentSubView = null;
+        } else {
+            history.back();
+        }
+    }
+
+    function showSubView(id, title) {
+        document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
+        document.getElementById(id).classList.remove('hidden');
+        document.getElementById('header-title').textContent = title;
+        currentSubView = id;
+    }
+
+    function switchStab(tab) {
+        document.querySelectorAll('.stab-content').forEach(c => c.classList.add('hidden'));
+        document.querySelectorAll('.stab-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(`stab-${tab}`).classList.remove('hidden');
+        document.getElementById(`stab-${tab}-btn`).classList.add('active');
+        if (tab === 'settings') {
+            document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
+            document.getElementById('view-main').classList.remove('hidden');
+            document.getElementById('header-title').textContent = '설정';
+            currentSubView = null;
+        } else {
+            document.getElementById('header-title').textContent = '포인트';
+        }
+    }
+
+    function selectGrade(grade) {
+        const info = GRADE_BENEFITS[grade];
+        const badge = document.getElementById('sel-grade-badge');
+        badge.textContent = grade;
+        badge.className = `grade-badge grade-${grade.toLowerCase()}`;
+        document.getElementById('sel-grade-desc').textContent = info.desc;
+        document.getElementById('sel-benefit-list').innerHTML = info.benefits.map(b => `<li>${b}</li>`).join('');
+        document.querySelectorAll('.ladder-btn').forEach(btn => {
+            btn.classList.toggle('selected', btn.dataset.grade === grade);
+        });
+    }
+
+    (async () => {
+        const token = localStorage.getItem('ls_token');
+        if (!token) { window.location.href = '/login'; return; }
+        const headers = { 'Authorization': `Bearer ${token}` };
+
+        const [meRes, actionsRes] = await Promise.all([
+            fetch('/api/me', { headers }),
+            fetch('/api/upgrade-actions', { headers }),
+        ]);
+
+        if (!meRes.ok) { window.location.href = '/login'; return; }
+        const user = await meRes.json();
+
+        document.getElementById('s-name').textContent = user.name;
+        document.getElementById('s-email').textContent = user.email;
+        document.getElementById('s-userid').textContent = user.ls_user_id;
+
+        const gradeEl = document.getElementById('s-grade-name');
+        gradeEl.textContent = user.grade;
+        gradeEl.className = `grade-name grade-${user.grade.toLowerCase()}`;
+
+        document.querySelectorAll('.ladder-btn').forEach(btn => {
+            if (btn.dataset.grade === user.grade) btn.classList.add('current-grade');
+        });
+        selectGrade(user.grade);
+
+        const saved = JSON.parse(localStorage.getItem('ls_consents') || '[]');
+        document.querySelectorAll('#view-consent input[type=checkbox]').forEach(el => {
+            el.checked = saved.length === 0 || saved.includes(el.name);
+        });
+
+        if (actionsRes.ok) {
+            const actions = await actionsRes.json();
+            if (actions.length) {
+                document.getElementById('upgrade-actions-container').innerHTML = actions.map(a => `
+                    <div class="upgrade-action-item">
+                        <span class="upgrade-icon">${a.icon}</span>
+                        <div class="upgrade-info">
+                            <div class="upgrade-title">${a.title}</div>
+                            <div class="upgrade-desc">${a.desc}</div>
+                        </div>
+                        <div class="upgrade-rewards">
+                            <span class="upgrade-points">${a.points}</span>
+                            <span class="upgrade-badge">${a.badge}</span>
+                        </div>
+                    </div>
+                `).join('');
+                document.getElementById('upgrade-actions-section').style.display = '';
+            }
+        }
+    })();
+
+    document.querySelectorAll('.ladder-btn').forEach(btn => {
+        btn.addEventListener('click', () => selectGrade(btn.dataset.grade));
+    });
+
+    document.getElementById('consent-save-btn').addEventListener('click', async () => {
+        const checked = [...document.querySelectorAll('#view-consent input:checked')].map(el => el.name);
+        if (checked.length === 0) { alert('최소 1개 이상 동의해주세요.'); return; }
+        localStorage.setItem('ls_consents', JSON.stringify(checked));
+        const token = localStorage.getItem('ls_token');
+        await fetch('/api/consent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ consents: checked }),
+        });
+        alert('동의 설정이 저장되었습니다.');
+    });
+
+    document.getElementById('logout-btn').addEventListener('click', () => {
+        localStorage.removeItem('ls_token');
+        window.location.href = '/login';
+    });
+</script>
+</body>
+</html>
