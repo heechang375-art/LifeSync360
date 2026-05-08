@@ -12,8 +12,9 @@
 | Ansible 초기 배포 (mysql / tokenization / private_api) | ✅ |
 | 크로스 VM 연결 및 서비스 검증 | ✅ |
 | 초기 데이터 적재 (master_customer 100만 / identity_map 349만 / profile 100만) | ✅ |
-| PII 암호화 (representative_name, birth_dt) | ❌ |
-| Ansible Vault encrypt 실행 | ⏳ 배포 직전 |
+| PII 암호화 (representative_name, birth_dt) | ✅ |
+| Ansible Vault encrypt 실행 | ✅ |
+| private_api DB 접속 환경변수 방식 전환 | ✅ |
 
 ### 플랫폼 / 어드민
 
@@ -37,6 +38,7 @@
 | ECS Blue/Green (CODE_DEPLOY, Green TG, TestListener) | ✅ |
 | CodeDeploy / CodePipeline IaC | ✅ |
 | ECS 부트스트랩 (DesiredCount=0, public 이미지 직접 참조) | ✅ |
+| Site-to-Site VPN Static 라우팅 전환 (BGP → Static) | ✅ |
 | Secrets Manager 값 입력 | ⏳ 배포 시점 |
 | taskdef.json ACCOUNT_ID 치환 | ⏳ 배포 시점 |
 | CloudFormation 스택 실제 배포 | ⏳ |
@@ -343,6 +345,13 @@ ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --ask-vault-pas
 
 ### 2026-05-08
 - PII 암호화 설계 및 가이드 작성 (→ pii-encryption-guide.md)
+- PII 암호화 구현 완료 — app.py, service.j2, tasks/main.yml, hosts.yml, onprem_schema.sql 5개 파일 수정
+- master_customer 100만 건 Fernet 암호화 마이그레이션 완료 (representative_name, birth_dt)
+- private_api DB 접속 방식 변경 — Secrets Manager → 환경변수 (DB_HOST, DB_USER, DB_PASS)
+- Ansible Vault 암호화 완료 (private_api, tokenization)
+- onprem-prod-repo README 최신화
+- MySQL root 비밀번호 재설정 (skip-grant-tables 복구)
+- Site-to-Site VPN BGP → Static 라우팅 전환 (→ aws-vpn-setup.md 문제3 참고)
 
 ---
 
@@ -350,8 +359,8 @@ ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --ask-vault-pas
 
 | 항목 | 담당 | 참고 파일 |
 |------|------|-----------|
-| PII 암호화 | 온프레미스 | pii-encryption-guide.md |
-| Ansible Vault encrypt 실행 | 온프레미스 | Step 9 |
+| PII 암호화 | ~~온프레미스~~ ✅ 완료 | pii-encryption-guide.md |
+| Ansible Vault encrypt 실행 | ~~온프레미스~~ ✅ 완료 | Step 9 |
 | taskdef.json ACCOUNT_ID 치환 | 배포 담당자 | platform + admin 각 4곳 |
 | Secrets Manager 값 입력 | 배포 담당자 | cloud-deploy-procedure.md 2단계 |
 | GitHub Secrets 등록 | 배포 담당자 | AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY |
