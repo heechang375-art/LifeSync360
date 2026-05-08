@@ -1,0 +1,1 @@
+mysql_app_password: "{{ vault_mysql_app_password }}"

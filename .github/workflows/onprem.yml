@@ -1,0 +1,46 @@
+name: On-Prem CI
+
+# CodeCommit 배포는 개발자가 직접 push (GitHub 경유 안 함)
+# 이 워크플로우는 코드 품질 검증만 담당
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'onprem-prod-repo/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'onprem-prod-repo/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: onprem-prod-repo
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pytest ansible
+
+      - name: Unit Test
+        run: |
+          if [ -d "tests" ]; then pytest tests/ -v; else echo "tests/ 없음 — 스킵"; fi
+
+      - name: Security Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: onprem-prod-repo
+          exit-code: '1'
+          severity: CRITICAL
+
+      - name: Ansible Syntax Check
+        run: ansible-playbook ansible/site.yml --syntax-check -i localhost,

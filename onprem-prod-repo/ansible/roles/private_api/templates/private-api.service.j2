@@ -10,7 +10,11 @@ ExecStart=/opt/private-api/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=5
 Environment=ENV=production
+Environment=ANSIBLE_ENV=production
 Environment=AWS_DEFAULT_REGION=ap-northeast-2
+Environment=DEPLOY_TOKEN={{ deploy_token }}
+Environment=CONTROL_NODE_URL={{ control_node_url }}
+Environment=PII_AES_KEY={{ pii_aes_key }}
 
 [Install]
 WantedBy=multi-user.target

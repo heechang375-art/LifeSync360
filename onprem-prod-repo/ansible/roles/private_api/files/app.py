@@ -1,14 +1,31 @@
 import boto3
 import json
+import os
+import subprocess
 import pymysql
-from fastapi import FastAPI, HTTPException
+from cryptography.fernet import Fernet
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 app = FastAPI()
 
+DEPLOY_TOKEN = os.environ['DEPLOY_TOKEN']
 REGION = 'ap-northeast-2'
 SECRET_ID = 'lifesync/onprem-db'
 DB_NAME = 'lifesync_onprem'
+
+
+def get_pii_key():
+    key = os.environ.get('PII_AES_KEY')
+    if not key:
+        secret = boto3.client('secretsmanager', region_name=REGION).get_secret_value(SecretId=SECRET_ID)
+        key = json.loads(secret['SecretString'])['pii_aes_key']
+    return Fernet(key.encode())
+
+def decrypt_pii(val):
+    if not val:
+        return None
+    return get_pii_key().decrypt(val.encode()).decode('utf-8')
 
 
 def get_db():
@@ -39,6 +56,8 @@ def get_customer(global_id: str):
             customer = cur.fetchone()
             if not customer:
                 raise HTTPException(status_code=404, detail='Customer not found')
+            customer['representative_name'] = decrypt_pii(customer['representative_name'])
+            customer['birth_dt'] = decrypt_pii(customer['birth_dt'])
 
             cur.execute(
                 'SELECT company_id, affiliate_customer_id, linked_at FROM customer_identity_map WHERE global_id = %s',
@@ -86,6 +105,14 @@ def get_identity(affiliate_customer_id: str, company_id: str):
     if not row:
         raise HTTPException(status_code=404, detail='Identity mapping not found')
     return row
+
+
+@app.post('/internal/deploy')
+async def trigger_deploy(request: Request):
+    if request.headers.get('X-Deploy-Token', '') != DEPLOY_TOKEN:
+        raise HTTPException(status_code=401, detail='배포 토큰 불일치')
+    subprocess.Popen(['/opt/private-api/trigger_ansible.sh'])
+    return {'status': 'triggered'}
 
 
 class MatchRequest(BaseModel):

@@ -1,0 +1,91 @@
+{% extends 'base.html' %}
+{% block title %}개요 – Admin{% endblock %}
+{% block page_title %}개요{% endblock %}
+
+{% block content %}
+<div class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-label">전체 유저</div>
+        <div class="stat-value">{{ total_users }}</div>
+        <div class="stat-sub">등록 회원 수</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">분석 완료</div>
+        <div class="stat-value">{{ analyzed }}</div>
+        <div class="stat-sub">GCP 분석 데이터 보유</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">미분석</div>
+        <div class="stat-value">{{ no_data }}</div>
+        <div class="stat-sub">아직 분석 데이터 없음</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">평균 종합점수</div>
+        <div class="stat-value">{{ avg_score }}</div>
+        <div class="stat-sub">분석 완료 유저 기준</div>
+    </div>
+</div>
+
+<div class="two-col">
+    <div class="card">
+        <div class="card-title">등급 분포</div>
+        {% set total = grade_dist.values() | sum %}
+        <div class="grade-dist">
+            {% for g in grades %}
+            {% set cnt = grade_dist.get(g, 0) %}
+            {% set pct = ((cnt / total * 100) | round(0)) if total > 0 else 0 %}
+            <div class="grade-dist-row">
+                <span class="grade-dist-name">{{ g }}</span>
+                <div class="grade-dist-track">
+                    <div class="grade-dist-fill fill-{{ g | lower }}" style="width: {{ pct }}%"></div>
+                </div>
+                <span class="grade-dist-cnt">{{ cnt }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">최근 분석 현황</div>
+        {% if recent %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>유저</th>
+                        <th>등급</th>
+                        <th>종합점수</th>
+                        <th>분석 시각</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in recent %}
+                    {% set matched_user = recent_users.get(item.global_id) %}
+                    <tr>
+                        <td>
+                            {% if matched_user %}
+                            <a class="table-link" href="{{ url_for('user_detail', ls_user_id=matched_user.ls_user_id) }}">
+                                <strong>{{ matched_user.name }}</strong>
+                            </a>
+                            <div class="mono" style="margin-top:2px;">{{ item.global_id }}</div>
+                            {% else %}
+                            <span class="mono">{{ item.global_id }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% set g = item.get('dynamic_grade', '-') | lower %}
+                            <span class="badge badge-{{ g }}">{{ item.get('dynamic_grade', '-') }}</span>
+                        </td>
+                        <td><strong>{{ item.get('dynamic_score', '-') }}</strong></td>
+                        <td class="mono">{{ item.get('update_time', '-') }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p style="color:#94a3b8; font-size:14px;">분석 데이터가 없습니다.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

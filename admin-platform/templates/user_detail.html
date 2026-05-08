@@ -1,0 +1,123 @@
+{% extends 'base.html' %}
+{% block title %}{{ user.name }} – Admin{% endblock %}
+{% block page_title %}유저 상세{% endblock %}
+
+{% block content %}
+<a class="back-link" href="{{ url_for('users') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+    </svg>
+    유저 목록으로
+</a>
+
+<div class="three-col">
+    <!-- 유저 정보 -->
+    <div class="card">
+        <div class="card-title">계정 정보</div>
+        <div class="info-row">
+            <span class="info-key">이름</span>
+            <span class="info-val"><strong>{{ user.name }}</strong></span>
+        </div>
+        <div class="info-row">
+            <span class="info-key">이메일</span>
+            <span class="info-val">{{ user.email }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-key">등급</span>
+            <span class="info-val">
+                <span class="badge badge-{{ user.grade | lower }}">{{ user.grade }}</span>
+            </span>
+        </div>
+        <div class="info-row">
+            <span class="info-key">회원번호</span>
+            <span class="info-val mono">{{ user.ls_user_id }}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-key">Global ID</span>
+            <span class="info-val mono">{{ user.global_id }}</span>
+        </div>
+    </div>
+
+    <!-- AI 분석 점수 -->
+    <div>
+        {% if scores %}
+        <div class="card">
+            <div class="card-title">AI 분석 점수</div>
+            <div class="score-grid">
+                <div class="score-item">
+                    <div class="score-item-label">종합점수</div>
+                    <div class="score-item-value">{{ scores.dynamic_score }}</div>
+                </div>
+                <div class="score-item">
+                    <div class="score-item-label">건강점수</div>
+                    <div class="score-item-value">{{ scores.health_score }}</div>
+                </div>
+                <div class="score-item">
+                    <div class="score-item-label">금융점수</div>
+                    <div class="score-item-value">{{ scores.fin_score or '-' }}</div>
+                </div>
+                <div class="score-item">
+                    <div class="score-item-label">행동점수</div>
+                    <div class="score-item-value">{{ scores.behavior_score or '-' }}</div>
+                </div>
+            </div>
+
+            <!-- 확률 바 3종 -->
+            <div style="margin-top:16px; display:flex; flex-direction:column; gap:10px;">
+                {% if scores.vip_prob %}
+                {% set vip_pct = (scores.vip_prob | float * 100) | round(0) | int %}
+                <div class="prob-row">
+                    <span class="prob-label">VIP 달성 확률</span>
+                    <div class="vip-bar-track">
+                        <div class="vip-bar-fill" style="width: {{ vip_pct }}%; background:#a855f7;"></div>
+                    </div>
+                    <span class="prob-pct" style="color:#7c3aed;">{{ vip_pct }}%</span>
+                </div>
+                {% endif %}
+                {% if scores.signup_prob %}
+                {% set signup_pct = (scores.signup_prob | float * 100) | round(0) | int %}
+                <div class="prob-row">
+                    <span class="prob-label">가입 확률</span>
+                    <div class="vip-bar-track">
+                        <div class="vip-bar-fill" style="width: {{ signup_pct }}%; background:#3b82f6;"></div>
+                    </div>
+                    <span class="prob-pct" style="color:#2563eb;">{{ signup_pct }}%</span>
+                </div>
+                {% endif %}
+                {% if scores.rec_prob %}
+                {% set rec_pct = (scores.rec_prob | float * 100) | round(0) | int %}
+                <div class="prob-row">
+                    <span class="prob-label">추천 반응 확률</span>
+                    <div class="vip-bar-track">
+                        <div class="vip-bar-fill" style="width: {{ rec_pct }}%; background:#10b981;"></div>
+                    </div>
+                    <span class="prob-pct" style="color:#059669;">{{ rec_pct }}%</span>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="update-time">마지막 분석: {{ scores.update_time or '-' }}</div>
+        </div>
+
+        {% if scores.next_best_action %}
+        <div class="nba-card">
+            <div class="nba-label">AI 추천 액션 (Next Best Action)</div>
+            <div class="nba-text">{{ scores.next_best_action }}</div>
+        </div>
+        {% endif %}
+
+        {% else %}
+        <div class="no-data-card">
+            <div class="no-data-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:36px;height:36px;stroke:#cbd5e1;margin-bottom:12px;">
+                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+            </div>
+            <strong style="color:#64748b;">분석 데이터 없음</strong>
+            <p>GCP Vertex AI 분석이 아직 완료되지 않은 유저입니다.</p>
+            <p style="margin-top:6px;">매일 새벽 04:00 이후 분석 결과가 반영됩니다.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

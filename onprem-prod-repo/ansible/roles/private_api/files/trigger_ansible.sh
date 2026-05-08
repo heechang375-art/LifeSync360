@@ -1,30 +1,22 @@
 #!/bin/bash
-ANSIBLE_DIR=/opt/ansible/ansible
-LOG=/var/log/ansible-deploy.log
+LOG=/opt/private-api/ansible-deploy.log
 
 if [ "${ANSIBLE_ENV}" = "production" ]; then
-  REGION=ap-northeast-2
-  INSTANCE_ID=$(aws ec2 describe-instances \
-    --filters "Name=tag:Name,Values=ansible-control-node" \
-              "Name=instance-state-name,Values=running" \
-    --query "Reservations[0].Instances[0].InstanceId" \
-    --output text \
-    --region $REGION)
+  RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+    "${CONTROL_NODE_URL}/deploy" \
+    -H "X-Deploy-Token: ${DEPLOY_TOKEN}" \
+    --max-time 10)
 
-  if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
-    echo "$(date) ERROR: ansible-control-node 인스턴스를 찾을 수 없음" >&2
+  HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+  BODY=$(echo "$RESPONSE" | head -1)
+
+  if [ "$HTTP_CODE" != "200" ]; then
+    echo "$(date) ERROR: Control Node 호출 실패 (HTTP $HTTP_CODE): $BODY" >&2
     exit 1
   fi
-
-  aws ssm send-command \
-    --document-name "AWS-RunShellScript" \
-    --instance-ids "$INSTANCE_ID" \
-    --parameters 'commands=["ansible-pull -U https://git-codecommit.ap-northeast-2.amazonaws.com/v1/repos/onprem-prod-repo ansible/site.yml >> /var/log/ansible-deploy.log 2>&1"]' \
-    --timeout-seconds 600 \
-    --region $REGION \
-    --output text \
-    --query "Command.CommandId"
+  echo "$(date) 배포 트리거 완료: $BODY" >> $LOG
 else
+  ANSIBLE_DIR=/opt/ansible/onprem-prod-repo/ansible
   echo "$(date) [LOCAL] ansible-playbook 직접 실행" >> $LOG
-  cd $ANSIBLE_DIR && ansible-playbook site.yml >> $LOG 2>&1
+  cd $ANSIBLE_DIR && ansible-playbook site.yml -i inventory/hosts.yml >> $LOG 2>&1
 fi

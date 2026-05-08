@@ -11,6 +11,8 @@ Restart=always
 RestartSec=5
 Environment=AWS_DEFAULT_REGION=ap-northeast-2
 Environment=MYSQL_HOST={{ mysql_vm_ip }}
+Environment="DB_USER={{ mysql_app_user }}"
+Environment="DB_PASS={{ mysql_app_password }}"
 
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,71 @@
+name: Admin CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'admin-platform/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'admin-platform/**'
+
+env:
+  AWS_REGION: ap-northeast-2
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin-platform
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: Unit Test
+        run: |
+          if [ -d "tests" ]; then pytest tests/ -v; else echo "tests/ 없음 — 스킵"; fi
+
+      - name: Security Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: admin-platform
+          exit-code: '1'
+          severity: CRITICAL
+
+      - name: Docker Build Test
+        run: docker build -t admin-build .
+
+  mirror-to-codecommit:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Mirror admin-platform subfolder to CodeCommit
+        run: |
+          git config --global credential.helper '!aws codecommit credential-helper $@'
+          git config --global credential.UseHttpPath true
+          git remote add codecommit https://git-codecommit.${{ env.AWS_REGION }}.amazonaws.com/v1/repos/lifesync360-admin
+          git subtree split --prefix=admin-platform -b _admin-deploy
+          git push codecommit _admin-deploy:main --force
+          git branch -D _admin-deploy

@@ -30,7 +30,14 @@
       - uvicorn
       - boto3
       - pymysql
+      - cryptography
     virtualenv: /opt/private-api/venv
+
+- name: Remove default Nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
 
 - name: Deploy Nginx config
   template:
