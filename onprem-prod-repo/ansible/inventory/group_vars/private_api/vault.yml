@@ -1,0 +1,2 @@
+vault_pii_aes_key: "<마이그레이션 시 사용한 Fernet 키 입력>"
+vault_mysql_app_password: "<MySQL lifesync 계정 패스워드 입력>"
