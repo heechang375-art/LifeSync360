@@ -74,7 +74,8 @@ git config --global credential.helper '!aws codecommit credential-helper $@'
 git config --global credential.UseHttpPath true
 git clone https://git-codecommit.ap-northeast-2.amazonaws.com/v1/repos/onprem-prod-repo /opt/ansible/onprem-prod-repo
 
-# Vault 파일 생성 (값은 5번 항목 참고)
+# Vault 파일은 git에 플레이스홀더가 암호화된 상태로 포함됨
+# 실제 값으로 덮어쓰고 재암호화 (값은 5번 항목 참고)
 cat > /opt/ansible/onprem-prod-repo/ansible/inventory/group_vars/private_api/vault.yml << 'EOF'
 vault_pii_aes_key: "<전달받은 Fernet 키>"
 vault_mysql_app_password: "<전달받은 MySQL 패스워드>"

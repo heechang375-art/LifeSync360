@@ -58,22 +58,22 @@ git config --global credential.UseHttpPath true
 git clone https://git-codecommit.ap-northeast-2.amazonaws.com/v1/repos/onprem-prod-repo /opt/ansible/onprem-prod-repo
 ```
 
-### 2. Vault 파일 생성 (Control Node에서 1회)
+### 2. Vault 파일 실제 값 입력 (Control Node에서 1회)
 
-git에 포함되지 않으므로 Control Node에서 직접 생성해야 함:
+git에 플레이스홀더가 암호화된 상태로 포함돼 있음. 실제 값으로 덮어쓰고 재암호화:
 
 ```bash
 cd /opt/ansible/onprem-prod-repo
 
-# private_api vault
+# private_api vault — 실제 값으로 덮어쓰기
 cat > ansible/inventory/group_vars/private_api/vault.yml << 'EOF'
-vault_pii_aes_key: "<마이그레이션 시 사용한 Fernet 키>"
-vault_mysql_app_password: "<MySQL lifesync 계정 패스워드>"
+vault_pii_aes_key: "<전달받은 Fernet 키>"
+vault_mysql_app_password: "<전달받은 MySQL 패스워드>"
 EOF
 
-# tokenization vault
+# tokenization vault — 실제 값으로 덮어쓰기
 cat > ansible/inventory/group_vars/tokenization/vault.yml << 'EOF'
-vault_mysql_app_password: "<MySQL lifesync 계정 패스워드>"
+vault_mysql_app_password: "<전달받은 MySQL 패스워드>"
 EOF
 
 # 암호화
