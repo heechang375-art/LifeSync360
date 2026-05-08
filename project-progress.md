@@ -40,7 +40,7 @@
 | ECS 부트스트랩 (DesiredCount=0, public 이미지 직접 참조) | ✅ |
 | Site-to-Site VPN Static 라우팅 전환 (BGP → Static) | ✅ |
 | Secrets Manager 값 입력 | ⏳ 배포 시점 |
-| taskdef.json ACCOUNT_ID 치환 | ⏳ 배포 시점 |
+| taskdef.json ACCOUNT_ID 치환 | ✅ |
 | CloudFormation 스택 실제 배포 | ⏳ |
 
 ---
@@ -361,7 +361,7 @@ ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --ask-vault-pas
 |------|------|-----------|
 | PII 암호화 | ~~온프레미스~~ ✅ 완료 | pii-encryption-guide.md |
 | Ansible Vault encrypt 실행 | ~~온프레미스~~ ✅ 완료 | Step 9 |
-| taskdef.json ACCOUNT_ID 치환 | 배포 담당자 | platform + admin 각 4곳 |
+| taskdef.json ACCOUNT_ID 치환 | ~~배포 담당자~~ ✅ 완료 | platform + admin 총 11곳 |
 | Secrets Manager 값 입력 | 배포 담당자 | cloud-deploy-procedure.md 2단계 |
 | GitHub Secrets 등록 | 배포 담당자 | AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY |
 | Parameter Store 등록 | 배포 담당자 | /lifesync360/ecr-uri / ecr-uri-admin |
