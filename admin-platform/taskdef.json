@@ -4,8 +4,8 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "256",
   "memory": "512",
-  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/lifesync-EcsTaskExecutionRole",
-  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/lifesync-EcsAdminTaskRole",
+  "executionRoleArn": "arn:aws:iam::354493396671:role/lifesync-EcsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::354493396671:role/lifesync-EcsAdminTaskRole",
   "containerDefinitions": [
     {
       "name": "admin",
@@ -25,27 +25,27 @@
       "secrets": [
         {
           "name": "AURORA_HOST",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:ACCOUNT_ID:secret:lifesync/aurora:host::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/aurora:host::"
         },
         {
           "name": "DB_USER",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:ACCOUNT_ID:secret:lifesync/aurora:user::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/aurora:user::"
         },
         {
           "name": "DB_PASS",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:ACCOUNT_ID:secret:lifesync/aurora:password::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/aurora:password::"
         },
         {
           "name": "SECRET_KEY",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:ACCOUNT_ID:secret:lifesync/admin:secret_key::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/admin:secret_key::"
         },
         {
           "name": "ADMIN_USER",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:ACCOUNT_ID:secret:lifesync/admin:username::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/admin:username::"
         },
         {
           "name": "ADMIN_PASSWORD",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:ACCOUNT_ID:secret:lifesync/admin:password::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/admin:password::"
         }
       ],
       "logConfiguration": {

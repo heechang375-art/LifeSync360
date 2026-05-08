@@ -4,8 +4,8 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",
   "memory": "1024",
-  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/lifesync-EcsTaskExecutionRole",
-  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/lifesync-EcsPlatformTaskRole",
+  "executionRoleArn": "arn:aws:iam::354493396671:role/lifesync-EcsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::354493396671:role/lifesync-EcsPlatformTaskRole",
   "containerDefinitions": [
     {
       "name": "platform",
@@ -27,23 +27,23 @@
       "secrets": [
         {
           "name": "AURORA_HOST",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:ACCOUNT_ID:secret:lifesync/aurora:host::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/aurora:host::"
         },
         {
           "name": "DB_USER",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:ACCOUNT_ID:secret:lifesync/aurora:user::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/aurora:user::"
         },
         {
           "name": "DB_PASS",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:ACCOUNT_ID:secret:lifesync/aurora:password::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/aurora:password::"
         },
         {
           "name": "JWT_SECRET",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:ACCOUNT_ID:secret:lifesync/jwt:secret::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/jwt:secret::"
         },
         {
           "name": "REDIS_HOST",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:ACCOUNT_ID:secret:lifesync/redis:host::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/redis:host::"
         }
       ],
       "logConfiguration": {
