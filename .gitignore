@@ -8,6 +8,7 @@ data/output/
 *.pem
 *.key
 .vault_pass
+credentials.md
 
 # Python
 __pycache__/
