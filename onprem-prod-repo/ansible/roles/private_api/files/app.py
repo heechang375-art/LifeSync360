@@ -29,12 +29,10 @@ def decrypt_pii(val):
 
 
 def get_db():
-    secret = boto3.client('secretsmanager', region_name=REGION).get_secret_value(SecretId=SECRET_ID)
-    creds = json.loads(secret['SecretString'])
     return pymysql.connect(
-        host=creds['host'],
-        user=creds['username'],
-        password=creds['password'],
+        host=os.environ['DB_HOST'],
+        user=os.environ['DB_USER'],
+        password=os.environ['DB_PASS'],
         database=DB_NAME,
         cursorclass=pymysql.cursors.DictCursor
     )

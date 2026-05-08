@@ -15,6 +15,9 @@ Environment=AWS_DEFAULT_REGION=ap-northeast-2
 Environment=DEPLOY_TOKEN={{ deploy_token }}
 Environment=CONTROL_NODE_URL={{ control_node_url }}
 Environment=PII_AES_KEY={{ pii_aes_key }}
+Environment=DB_HOST={{ mysql_vm_ip }}
+Environment=DB_USER={{ mysql_app_user }}
+Environment=DB_PASS={{ mysql_app_password }}
 
 [Install]
 WantedBy=multi-user.target
