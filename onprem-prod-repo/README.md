@@ -1,6 +1,6 @@
 # On-Prem CI/CD (Ansible 배포)
 
-MySQL / Tokenization / Private API EC2 배포 파이프라인.
+MySQL / Tokenization / Private API 배포 파이프라인.
 
 ## 파이프라인 흐름
 
@@ -12,7 +12,7 @@ Developer Push (GitHub)
     → CodePipeline 트리거
     → CodeBuild (SSM Send Command 실행)
     → Ansible Control Node (git pull → ansible-playbook)
-    → MySQL / Tokenization / Private API EC2 배포
+    → MySQL / Tokenization / Private API 배포
 ```
 
 ---
@@ -24,69 +24,69 @@ Developer Push (GitHub)
 | `.github/workflows/ci.yml` | GitHub Actions: 테스트 + CodeCommit 미러링 |
 | `buildspec.yml` | CodeBuild: SSM으로 Ansible Control Node 호출 |
 | `ansible/site.yml` | Ansible 전체 실행 진입점 |
-| `ansible/inventory/hosts` | 배포 대상 서버 IP 목록 |
+| `ansible/inventory/hosts.yml` | 배포 대상 서버 IP 목록 |
+| `ansible/inventory/group_vars/` | 역할별 변수 및 Vault 시크릿 |
 | `ansible/roles/mysql/` | MySQL 스키마 마이그레이션 + 백업 설정 |
 | `ansible/roles/tokenization/` | 토크나이저 서비스 배포 |
-| `ansible/roles/private_api/` | FastAPI + Nginx + systemd 배포 |
+| `ansible/roles/private_api/` | FastAPI + systemd 배포 |
 
 ---
 
 ## 사전 준비
 
-### 1. Terraform EC2 태그 확인
-
-Dynamic Inventory를 사용하므로 IP 수정 불필요.
-Terraform에서 EC2 생성 시 아래 태그가 반드시 있어야 함:
-
-```hcl
-# MySQL EC2
-tags = { Project = "lifesync360", Role = "mysql" }
-
-# Tokenization EC2
-tags = { Project = "lifesync360", Role = "tokenization" }
-
-# Private API EC2
-tags = { Project = "lifesync360", Role = "private_api" }
-```
-
-IaC 재구축으로 IP가 바뀌어도 태그 기반으로 자동 탐색.
-
-### 2. Ansible Control Node EC2 초기 설정
+### 1. Ansible Control Node EC2 초기 설정
 
 Ansible Control Node EC2에 SSH로 접속 후 1회 실행:
 
 ```bash
 # Ansible 설치
-sudo yum install -y ansible git python3-pip
-
-# Dynamic Inventory용 컬렉션 및 라이브러리 설치
-ansible-galaxy collection install amazon.aws
-pip3 install boto3 botocore
+sudo apt-get install -y ansible git python3-pip
 
 # 배포 디렉토리 생성
 sudo mkdir -p /opt/ansible
-sudo chown ec2-user:ec2-user /opt/ansible
+sudo chown ubuntu:ubuntu /opt/ansible
 
 # SSH 배포 키 생성 (대상 서버 접속용)
-mkdir -p /opt/ansible/.ssh
-ssh-keygen -t rsa -b 4096 -f /opt/ansible/.ssh/deploy_key -N ""
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/lifesync360-onprem.pem -N ""
 
 # 생성된 공개키 출력 → 대상 서버 authorized_keys에 등록 필요
-cat /opt/ansible/.ssh/deploy_key.pub
+cat ~/.ssh/lifesync360-onprem.pem.pub
 
 # CodeCommit에서 초기 클론
 git config --global credential.helper '!aws codecommit credential-helper $@'
 git config --global credential.UseHttpPath true
-git clone https://git-codecommit.ap-northeast-2.amazonaws.com/v1/repos/onprem-prod-repo /opt/ansible
+git clone https://git-codecommit.ap-northeast-2.amazonaws.com/v1/repos/onprem-prod-repo /opt/ansible/onprem-prod-repo
+```
+
+### 2. Vault 파일 생성 (Control Node에서 1회)
+
+git에 포함되지 않으므로 Control Node에서 직접 생성해야 함:
+
+```bash
+cd /opt/ansible/onprem-prod-repo
+
+# private_api vault
+cat > ansible/inventory/group_vars/private_api/vault.yml << 'EOF'
+vault_pii_aes_key: "<마이그레이션 시 사용한 Fernet 키>"
+vault_mysql_app_password: "<MySQL lifesync 계정 패스워드>"
+EOF
+
+# tokenization vault
+cat > ansible/inventory/group_vars/tokenization/vault.yml << 'EOF'
+vault_mysql_app_password: "<MySQL lifesync 계정 패스워드>"
+EOF
+
+# 암호화
+ansible-vault encrypt ansible/inventory/group_vars/private_api/vault.yml
+ansible-vault encrypt ansible/inventory/group_vars/tokenization/vault.yml
 ```
 
 ### 3. 대상 서버 SSH 키 등록
 
-MySQL / Tokenization / Private API EC2 각각에 접속 후:
+MySQL / Tokenization / Private API 각각에 접속 후:
 
 ```bash
-# Ansible Control Node의 공개키를 authorized_keys에 추가
-echo "ssh-rsa AAAA..." >> ~/.ssh/authorized_keys
+echo "<Control Node 공개키>" >> ~/.ssh/authorized_keys
 chmod 600 ~/.ssh/authorized_keys
 ```
 
@@ -107,7 +107,6 @@ Ansible Control Node EC2에 아래 권한을 가진 IAM Role 연결:
 {
   "Effect": "Allow",
   "Action": [
-    "secretsmanager:GetSecretValue",
     "codecommit:GitPull"
   ],
   "Resource": "*"
@@ -149,27 +148,27 @@ GitHub Actions → CodeCommit 미러 → CodePipeline → CodeBuild → SSM → 
 Ansible Control Node EC2에 SSH 접속 후:
 
 ```bash
-cd /opt/ansible
+cd /opt/ansible/onprem-prod-repo
 
 # 전체 배포
-ansible-playbook site.yml -i inventory/hosts
+ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --ask-vault-pass
 
 # 특정 역할만 배포
-ansible-playbook site.yml -i inventory/hosts --tags mysql
-ansible-playbook site.yml -i inventory/hosts --tags tokenization
-ansible-playbook site.yml -i inventory/hosts --tags private_api
-
-# 실제 적용 전 dry-run (변경사항 미리보기)
-ansible-playbook site.yml -i inventory/hosts --check
+ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --tags mysql --ask-vault-pass
+ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --tags tokenization --ask-vault-pass
+ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --tags private_api --ask-vault-pass
 
 # 특정 서버만 배포
-ansible-playbook site.yml -i inventory/hosts --limit mysql
+ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --limit ls-api --ask-vault-pass
+
+# dry-run
+ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --check --ask-vault-pass
 ```
 
 ### Ansible Syntax 검사
 
 ```bash
-ansible-playbook ansible/site.yml --syntax-check -i ansible/inventory/hosts
+ansible-playbook ansible/site.yml --syntax-check -i ansible/inventory/hosts.yml
 ```
 
 ---
@@ -199,9 +198,8 @@ systemctl status mysqld
 ### mysql role
 | 작업 | 내용 |
 |------|------|
-| schema.sql 적용 | lifesync360 DB 테이블 생성/변경 |
+| schema.sql 적용 | lifesync_onprem DB 테이블 생성/변경 |
 | backup.sh 등록 | 매일 새벽 2시 자동 백업 크론 |
-| 자격증명 | Secrets Manager `lifesync/db` 에서 조회 |
 
 ### tokenization role
 | 작업 | 내용 |
@@ -214,7 +212,8 @@ systemctl status mysqld
 | 작업 | 내용 |
 |------|------|
 | app.py 배포 | `/opt/private-api/` 에 복사 |
-| Nginx 설정 | 포트 80 → 8000 리버스 프록시 |
+| PII 복호화 | representative_name, birth_dt Fernet 복호화 적용 |
+| DB 연결 | 환경변수(DB_HOST, DB_USER, DB_PASS)로 MySQL 접속 |
 | systemd 등록 | 서버 재부팅 시 자동 시작 |
 
 ---
@@ -234,20 +233,23 @@ systemctl status mysqld
 ```
 원인: 대상 서버 authorized_keys에 Control Node 공개키 미등록
 해결:
-  cat /opt/ansible/.ssh/deploy_key.pub
+  cat ~/.ssh/lifesync360-onprem.pem.pub
   → 출력된 공개키를 대상 서버 ~/.ssh/authorized_keys 에 추가
 ```
 
-### Secrets Manager 접근 실패
+### Ansible Vault 오류
 ```
-원인: Ansible Control Node IAM Role에 권한 없음
-해결: IAM Role Policy에 secretsmanager:GetSecretValue 추가
+원인: vault.yml 파일이 Control Node에 없거나 패스워드 불일치
+해결:
+  ls ansible/inventory/group_vars/private_api/vault.yml
+  ls ansible/inventory/group_vars/tokenization/vault.yml
+  → 없으면 "사전 준비 2단계" 참고해서 생성
 ```
 
 ### MySQL 마이그레이션 실패
 ```
 원인: schema.sql 문법 오류 또는 기존 테이블 충돌
 해결:
-  mysql -u root -p lifesync360 < /tmp/schema.sql
+  sudo mysql lifesync_onprem < /tmp/schema.sql
   → 직접 실행해서 에러 메시지 확인
 ```

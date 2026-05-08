@@ -154,7 +154,7 @@ EXIT;
 
 ## 5단계 — 마이그레이션 스크립트 실행
 
-`db/migrate_pii_encrypt.py` 를 ls-db로 복사 후 실행.
+ls-vpngw(control node) 한 곳에서만 실행. `DB_HOST`로 ls-db MySQL에 원격 접속하므로 ls-db에 직접 들어갈 필요 없음.
 
 **스크립트 내용** (`db/migrate_pii_encrypt.py`):
 
@@ -217,19 +217,18 @@ finally:
 print('암호화 완료')
 ```
 
-**ls-db에서 실행:**
+**ls-vpngw에서 실행:**
 
 ```bash
-# 공유 폴더에서 복사
-sudo cp /mnt/downloads/migrate_pii_encrypt.py /opt/migrate_pii_encrypt.py
-
 # 의존성 설치 (최초 1회)
-sudo pip3 install cryptography pymysql --break-system-packages
+pip3 install cryptography pymysql --break-system-packages
 
 # 실행 (약 5~10분 소요)
 export PII_AES_KEY=<1단계 키>
-export DB_PASS=<MySQL root 패스워드>
-python3 /opt/migrate_pii_encrypt.py
+export DB_HOST=192.168.56.11
+export DB_USER=lifesync
+export DB_PASS=<MySQL lifesync 계정 패스워드>
+python3 /opt/ansible/onprem-prod-repo/db/migrate_pii_encrypt.py
 ```
 
 **완료 확인:**

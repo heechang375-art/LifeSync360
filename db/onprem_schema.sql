@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS master_customer (
     global_id            VARCHAR(30) PRIMARY KEY,
     representative_name  VARCHAR(300),
-    birth_dt             VARCHAR(100),
+    birth_dt             VARCHAR(200),
     gender               CHAR(1),
     nationality          VARCHAR(10) DEFAULT 'KR',
     created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
