@@ -386,3 +386,40 @@ sudo systemctl restart private-api
 ```
 
 키가 다를 경우 → 마이그레이션 때 사용한 키로 `vault.yml` 수정 후 Ansible 재배포.
+
+---
+
+## 증상: IaC 재배포 후 VPN 터널 끊김
+
+매일 9AM IaC 재배포로 AWS VPN Connection이 재생성되면 터널 IP가 바뀌어 StrongSwan 연결이 끊김.
+
+**원인**: `/etc/ipsec.conf`의 `right=` 값이 구 터널 IP로 남아있어 AWS 측 응답이 없음.
+
+**해결**: 로컬 PC에서 `scripts/update-vpn-tunnel.sh` 실행.
+
+```bash
+# 사전 조건: AWS CLI 설치 및 인증 완료 (aws configure)
+cd /path/to/LS
+bash scripts/update-vpn-tunnel.sh
+
+# VPN Connection ID를 직접 지정하는 경우
+VPN_CONNECTION_ID=vpn-xxxxxxxxx bash scripts/update-vpn-tunnel.sh
+```
+
+스크립트 동작:
+1. `aws ec2 describe-vpn-connections`로 새 터널 IP 조회
+2. ls-api SSH → `/etc/ipsec.conf` `right=` 업데이트
+3. `/etc/ipsec.secrets` IP 업데이트
+4. `sudo systemctl restart strongswan-starter`
+5. `sudo ipsec status` 출력으로 ESTABLISHED 확인
+
+**PSK 문제 (IaC 팀 고정 전)**: IaC 재배포 시 PSK도 바뀌는 경우 스크립트가 ls-api 기존 ipsec.secrets에서 PSK를 읽지만 이미 무효화된 값임. 이 경우:
+```bash
+# CF 설정 파일 다운로드(AWS 콘솔 → VPN Connection → Download Config)에서 PSK 확인 후
+# ls-api에서 직접 수정
+sudo nano /etc/ipsec.secrets
+# <leftid> <새터널IP> : PSK "<새PSK값>"
+sudo systemctl restart strongswan-starter
+```
+
+**근본 해결**: IaC팀이 CF에서 `PreSharedKey`를 Secrets Manager 고정값으로 지정하면 PSK는 불변 → 스크립트만으로 완전 자동화.
