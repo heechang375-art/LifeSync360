@@ -348,12 +348,12 @@ mysql:
   hosts:
     ls-db:
       ansible_host: 192.168.56.11
-      ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o ProxyJump=ansible@192.168.56.13'
+      ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o ProxyJump=ansible@172.16.1.73'
 tokenization:
   hosts:
     ls-token:
       ansible_host: 192.168.56.12
-      ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o ProxyJump=ansible@192.168.56.13'
+      ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o ProxyJump=ansible@172.16.1.73'
 ```
 
 ProxyJump가 동작하려면 ls-api에 SSH 키가 먼저 배포돼 있어야 함 (setup-ssh-keys.sh 실행 순서 참고).
