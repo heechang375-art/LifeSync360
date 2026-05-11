@@ -175,16 +175,82 @@ ls-token:
 
 ## 증상: trigger_ansible.sh 실행 시 호스트 변수 undefined
 
-**원인**: `ansible-pull` 명령에 `-i` 플래그 누락. 인벤토리 지정 없으면 호스트 변수 전부 undefined.
+```
+fatal: [ls-api]: FAILED! => {"msg": "The task includes an option with an undefined variable..."}
+```
+
+**원인**: `ansible-playbook` 명령에 `-i` 플래그 누락. 인벤토리 지정 없으면 호스트 변수 전부 undefined.
 
 **해결**: `trigger_ansible.sh`에 `-i ansible/inventory/hosts.yml` 추가.
 
 ```bash
 # 변경 전
-ansible-pull -U <repo_url> ansible/site.yml
+ansible-playbook ansible/site.yml
 
 # 변경 후
-ansible-pull -U <repo_url> -i ansible/inventory/hosts.yml ansible/site.yml
+ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --vault-password-file ~/.vault_pass
+```
+
+---
+
+## 증상: Ansible 실행 시 ImportError: No module named 'six.moves'
+
+```
+ImportError: No module named 'six.moves'
+TASK [Gathering Facts] FAILED
+```
+
+**원인**: Amazon Linux + Python 3.8 환경에서 특정 Ansible 버전이 `six` 패키지에 의존하는데, Python 3 환경에는 기본 포함이 안 된 경우.
+
+**해결**:
+```bash
+# Control Node에서 six 설치
+pip3 install six
+
+# 또는 ansible_python_interpreter 명시 (hosts.yml)
+# vars:
+#   ansible_python_interpreter: /usr/bin/python3
+# → 이미 설정돼 있으면 python3 경로에 six 설치
+
+# Ubuntu 22.04 Control Node 사용 시 Ansible 버전 최신화 권장
+sudo apt-get install -y ansible  # Ubuntu 레포 기본 버전
+# 또는
+pip3 install ansible --upgrade
+```
+
+**참고**: EC2 Control Node는 Ubuntu 22.04 기준으로 IaC가 작성됨. Amazon Linux 환경이면 위 방법으로 해결하되, 장기적으로 Ubuntu로 전환 고려.
+
+---
+
+## 증상: Deploy Server 기동 실패 — EnvironmentFile not found
+
+```
+systemctl status deploy-server
+● deploy-server.service — LifeSync360 Deploy Server
+   Active: failed
+   ...
+   deploy-server.service: Failed to load environment files: /etc/deploy-server/env: No such file or directory
+```
+
+**원인**: `deploy-server.service`가 `EnvironmentFile=/etc/deploy-server/env`를 참조하는데, 파일이 생성되지 않은 상태에서 서비스 시작 시도.
+
+**해결**: Secrets Manager에서 토큰을 가져와 파일 생성 후 서비스 재시작.
+```bash
+# EC2 Control Node에서
+sudo mkdir -p /etc/deploy-server
+
+DEPLOY_TOKEN=$(aws secretsmanager get-secret-value \
+  --secret-id lifesync/deploy-token \
+  --region ap-northeast-2 \
+  --query SecretString --output text \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+echo "DEPLOY_TOKEN=${DEPLOY_TOKEN}" | sudo tee /etc/deploy-server/env > /dev/null
+sudo chmod 600 /etc/deploy-server/env
+
+sudo systemctl daemon-reload
+sudo systemctl start deploy-server
+sudo systemctl status deploy-server
 ```
 
 ---

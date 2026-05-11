@@ -68,10 +68,12 @@ VirtualBox → 파일 → 호스트 네트워크 관리자 → 만들기
 
 | VM 이름 | IP | 역할 | 메모리 | 디스크 |
 |---------|-----|------|--------|--------|
-| ls-vpngw | 192.168.56.10 | Ansible Control Node | 1GB | 20GB |
+| ls-vpngw | 192.168.56.10 | VPN Gateway (초기 구축 시 임시 Ansible Control Node 겸용) | 1GB | 20GB |
 | ls-db    | 192.168.56.11 | MySQL | 2GB | 50GB |
 | ls-token | 192.168.56.12 | Tokenization Service | 1GB | 20GB |
 | ls-api   | 192.168.56.13 | Private API + Cron | 1GB | 20GB |
+
+> **Note**: Ansible Control Node 역할은 Step 11에서 EC2로 이전. ls-vpngw는 VPN 터널 유지 전용으로 남음.
 
 공통 설정: Ubuntu 22.04 / 어댑터1=NAT / 어댑터2=Host-Only(192.168.56.x 고정 IP)
 
@@ -99,21 +101,31 @@ sudo netplan apply
 
 ---
 
-### Step 3 — SSH 키 생성 및 배포 (개발 PC 또는 ls-vpngw)
+### Step 3 — SSH 키 생성 및 배포
+
+> 개발 PC(VirtualBox 호스트) 또는 ls-vpngw에서 실행. 3개 VM에 직접 접근 가능한 환경 기준.
+> EC2 Control Node에서 배포할 경우 → Step 12의 `setup-ssh-keys.sh` 사용.
 
 ```bash
-# SSH 키 생성 (최초 1회)
+# SSH 키 생성 (최초 1회, ~/.ssh 없으면 먼저 생성)
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
 ssh-keygen -t rsa -b 4096 -f ~/.ssh/lifesync360-onprem.pem -N ""
 
-# 각 VM에 공개키 등록
+# 각 VM에 공개키 등록 (3개 VM 직접 접근 가능한 환경에서)
 ssh-copy-id -i ~/.ssh/lifesync360-onprem.pem.pub ansible@192.168.56.11
 ssh-copy-id -i ~/.ssh/lifesync360-onprem.pem.pub ansible@192.168.56.12
 ssh-copy-id -i ~/.ssh/lifesync360-onprem.pem.pub ansible@192.168.56.13
+
+# 확인
+ssh -i ~/.ssh/lifesync360-onprem.pem ansible@192.168.56.13 "echo ok"
 ```
 
 ---
 
-### Step 4 — Ansible 초기 설정 및 연결 확인 (ls-vpngw)
+### Step 4 — Ansible 초기 설정 및 연결 확인 (초기 구축 전용)
+
+> **이 단계는 초기 온프레미스 구축 시 ls-vpngw를 임시 Control Node로 쓸 때만 필요.**
+> EC2 Control Node가 준비되면 Step 11~12로 대체됨.
 
 ```bash
 ssh ansible@192.168.56.10
@@ -126,29 +138,40 @@ git clone <repo_url> /opt/ansible/onprem-prod-repo
 cd /opt/ansible/onprem-prod-repo
 
 # SSH 키 복사 (개발 PC → ls-vpngw는 공유 폴더 또는 scp 이용)
-mkdir -p ~/.ssh
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
 cp /mnt/downloads/lifesync360-onprem.pem ~/.ssh/
 chmod 600 ~/.ssh/lifesync360-onprem.pem
 
 # 연결 확인 — 3개 VM 모두 pong 이면 정상
 ansible all -m ping -i ansible/inventory/hosts.yml
+# ls-vpngw는 3개 VM 직접 접근 가능하므로 ProxyJump 불필요
 ```
 
 ---
 
 ### Step 5 — Ansible 첫 배포
 
+> Vault 암호화 전이면 `--ask-vault-pass` 없이 실행. Step 9 이후엔 vault-pass 필요.
+
 ```bash
-# ls-vpngw에서
+# ls-vpngw 또는 개발 PC에서 (초기 구축 시)
 cd /opt/ansible/onprem-prod-repo
+
+# Vault 암호화 전
 ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml
+
+# Vault 암호화 후 (Step 9 완료 시)
+ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml \
+  --vault-password-file ~/.vault_pass
+# 또는 패스워드 직접 입력
+ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --ask-vault-pass
 ```
 
 배포 후 서비스 상태 확인:
 ```bash
-ssh ansible@192.168.56.11 "sudo systemctl status mysql"
-ssh ansible@192.168.56.12 "sudo systemctl status tokenization"
-ssh ansible@192.168.56.13 "sudo systemctl status private-api nginx"
+ssh -i ~/.ssh/lifesync360-onprem.pem ansible@192.168.56.11 "sudo systemctl status mysql"
+ssh -i ~/.ssh/lifesync360-onprem.pem ansible@192.168.56.12 "sudo systemctl status tokenization"
+ssh -i ~/.ssh/lifesync360-onprem.pem ansible@192.168.56.13 "sudo systemctl status private-api nginx"
 ```
 
 ---
@@ -306,6 +329,138 @@ git push
 이후 Ansible 실행 시:
 ```bash
 ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --ask-vault-pass
+```
+
+---
+
+---
+
+### Step 10 — Secrets Manager 등록 (EC2 Control Node 배포 전 필수)
+
+AWS Console 또는 CLI로 아래 3개 시크릿을 먼저 등록해야 CloudFormation UserData가 정상 완료됨.
+
+```bash
+# Ansible Vault 패스워드 (vault.yml 복호화용)
+aws secretsmanager create-secret \
+  --name lifesync/ansible-vault \
+  --secret-string '{"password":"<Ansible Vault 패스워드>"}' \
+  --region ap-northeast-2
+
+# 온프레미스 ansible 계정 패스워드 (ssh-copy-id 초기 배포용)
+aws secretsmanager create-secret \
+  --name lifesync/ansible-vm \
+  --secret-string '{"password":"<ansible 계정 패스워드>"}' \
+  --region ap-northeast-2
+
+# Deploy Server 인증 토큰 (X-Deploy-Token)
+aws secretsmanager create-secret \
+  --name lifesync/deploy-token \
+  --secret-string '{"token":"<X-Deploy-Token 값>"}' \
+  --region ap-northeast-2
+```
+
+---
+
+### Step 11 — EC2 Control Node CloudFormation 배포
+
+> VPN이 연결된 상태에서 배포해야 UserData [5/6] SSH 키 배포 단계가 성공함.
+
+```bash
+aws cloudformation deploy \
+  --template-file infra/compute/control-node.yaml \
+  --stack-name lifesync-control-node \
+  --parameter-overrides \
+    SubnetId=<Management VPC 서브넷 ID> \
+    VpcId=<Management VPC ID> \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region ap-northeast-2
+```
+
+배포 후 EC2 Private IP 확인 (vars.yml 업데이트에 필요):
+```bash
+aws cloudformation describe-stacks \
+  --stack-name lifesync-control-node \
+  --query 'Stacks[0].Outputs' \
+  --region ap-northeast-2
+# → PrivateIp, DeployServerUrl 출력
+```
+
+---
+
+### Step 12 — Control Node 초기화 확인 및 연결 테스트
+
+UserData 완료까지 약 5~10분 소요. SSM Session Manager로 접속해서 확인.
+
+```bash
+# SSM으로 접속 (SSH 키 없이)
+aws ssm start-session --target <InstanceId> --region ap-northeast-2
+
+# 초기화 완료 여부 확인
+cat /tmp/control-node-ready       # "done" 이면 정상
+cat /var/log/control-node-init.log  # 상세 로그
+
+# Deploy Server 상태 확인
+sudo systemctl status deploy-server
+curl http://localhost:9000/health
+# → {"status": "ok"}
+
+# Ansible 연결 확인
+ansible all -m ping \
+  -i /opt/ansible/onprem-prod-repo/ansible/inventory/hosts.yml \
+  --vault-password-file ~/.vault_pass
+# → ls-api: pong, ls-db: pong, ls-token: pong 확인
+```
+
+SSH 키 배포가 실패했을 경우 수동 실행:
+```bash
+# SSM 세션에서 ubuntu로 전환 후
+sudo -u ubuntu bash /infra/deploy-server/setup-ssh-keys.sh
+# ANSIBLE_PASS 환경변수 없으면 대화형으로 패스워드 입력
+```
+
+---
+
+### Step 13 — vars.yml control_node_url 업데이트 및 재배포
+
+EC2 Control Node Private IP를 확인 후 레포 업데이트.
+
+```yaml
+# onprem-prod-repo/ansible/inventory/group_vars/private_api/vars.yml
+deploy_token: "lifesync-deploy-token-2026"
+control_node_url: "http://<EC2-Private-IP>:9000"   # ← 실제 IP로 변경
+```
+
+```bash
+git add ansible/inventory/group_vars/private_api/vars.yml
+git commit -m "chore: control_node_url EC2 Private IP 반영"
+git push
+
+# EC2 Control Node에서 레포 최신화 후 ls-api 재배포
+cd /opt/ansible/onprem-prod-repo
+git pull
+ansible-playbook ansible/site.yml \
+  -i ansible/inventory/hosts.yml \
+  --vault-password-file ~/.vault_pass \
+  --limit ls-api
+```
+
+---
+
+### Step 14 — CI/CD 트리거 전체 흐름 테스트
+
+ls-api VM에서 배포 트리거 → EC2 Control Node → ansible-playbook 실행까지 확인.
+
+```bash
+# ls-api VM에서
+TOKEN=$(sudo cat /etc/systemd/system/private-api.service | grep DEPLOY_TOKEN | cut -d= -f3)
+
+curl -X POST http://localhost:8000/internal/deploy \
+  -H "X-Deploy-Token: ${TOKEN}"
+# → {"status": "triggered"}
+
+# EC2 Control Node에서 로그 확인
+tail -f /var/log/ansible-deploy.log
+# ansible-playbook 실행 로그 확인
 ```
 
 ---
