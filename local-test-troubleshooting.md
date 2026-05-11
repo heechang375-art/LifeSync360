@@ -231,6 +231,69 @@ sudo cp /mnt/downloads/customer_profile.csv /var/lib/mysql-files/
 
 ---
 
+## 증상: Ansible 배포 후 서비스 파일 환경변수 미치환
+
+```
+Environment=DEPLOY_TOKEN=배포 트리거 토큰 입력
+```
+
+서비스 재시작해도 토큰 값이 리터럴 텍스트로 남아 있음.
+
+**원인**: Ansible이 `service.j2` 템플릿을 배포할 때 `{{ deploy_token }}` 변수가 치환되지 않은 채 저장됨. vars.yml 값은 로컬에서 정상이어도 EC2 Control Node의 레포가 `git pull`되지 않은 상태면 구버전 템플릿이 사용됨.
+
+**확인**:
+```bash
+# ls-api VM에서
+sudo cat /etc/systemd/system/private-api.service | grep DEPLOY_TOKEN
+# 리터럴 텍스트가 보이면 미반영 상태
+```
+
+**해결**:
+```bash
+# EC2 Control Node에서
+cd /opt/ansible/onprem-prod-repo
+git pull
+
+ansible-playbook ansible/site.yml \
+  -i ansible/inventory/hosts.yml \
+  --vault-password-file ~/.vault_pass \
+  --limit ls-api
+
+# ls-api에서 확인
+sudo systemctl status private-api
+```
+
+---
+
+## 증상: ansible ping UNREACHABLE — ls-db / ls-token (during banner)
+
+```
+UNREACHABLE! => {"msg": "Failed to connect to the host via ssh: ssh: connect to host 192.168.56.11 port 22: Connection timed out\nReceived disconnect from ... during banner exchange"}
+```
+
+ls-api(192.168.56.13)는 정상인데 ls-db / ls-token만 UNREACHABLE.
+
+**원인**: EC2 Control Node에서 192.168.56.11 / 192.168.56.12는 직접 라우팅이 안 되고 ls-api를 경유해야 함. `hosts.yml`에 ProxyJump 설정 없으면 SSH가 직접 연결 시도하다 타임아웃.
+
+**해결**: `hosts.yml`에 `ansible_ssh_common_args` 추가.
+
+```yaml
+mysql:
+  hosts:
+    ls-db:
+      ansible_host: 192.168.56.11
+      ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o ProxyJump=ansible@192.168.56.13'
+tokenization:
+  hosts:
+    ls-token:
+      ansible_host: 192.168.56.12
+      ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o ProxyJump=ansible@192.168.56.13'
+```
+
+ProxyJump가 동작하려면 ls-api에 SSH 키가 먼저 배포돼 있어야 함 (setup-ssh-keys.sh 실행 순서 참고).
+
+---
+
 ## 증상: PII 복호화 실패 (500 에러)
 
 ```

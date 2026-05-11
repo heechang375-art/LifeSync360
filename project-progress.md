@@ -39,8 +39,12 @@
 | CodeDeploy / CodePipeline IaC | ✅ |
 | ECS 부트스트랩 (DesiredCount=0, public 이미지 직접 참조) | ✅ |
 | Site-to-Site VPN Static 라우팅 전환 (BGP → Static) | ✅ |
-| Secrets Manager 값 입력 | ⏳ 배포 시점 |
 | taskdef.json ACCOUNT_ID 치환 | ✅ |
+| EC2 Control Node IaC (infra/compute/control-node.yaml) | ✅ |
+| Deploy Server 구축 (Flask 9000, systemd, setup-ssh-keys.sh) | ✅ |
+| DEPLOY_TOKEN Secrets Manager 분리 (/etc/deploy-server/env) | ✅ |
+| hosts.yml ProxyJump 설정 (ls-db / ls-token → ls-api 경유) | ✅ |
+| Secrets Manager 값 입력 (lifesync/* 전체) | ⏳ 배포 시점 |
 | CloudFormation 스택 실제 배포 | ⏳ |
 
 ---
@@ -353,6 +357,18 @@ ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --ask-vault-pas
 - MySQL root 비밀번호 재설정 (skip-grant-tables 복구)
 - Site-to-Site VPN BGP → Static 라우팅 전환 (→ aws-vpn-setup.md 문제3 참고)
 
+### 2026-05-11
+- admin-platform 대시보드 사이드바 탭 네비게이션 개편 (overview 4탭, user_detail 5탭)
+- admin-platform 동의현황 / 추천이력 / 제휴사매핑 / 활성캠페인 / 최근추천 섹션 추가
+- EC2 Control Node CloudFormation IaC 작성 (infra/compute/control-node.yaml)
+  - IAM Role: Secrets Manager + CodeCommit + SSM
+  - UserData: 패키지 설치 → CodeCommit 클론 → vault 패스워드 → Deploy Server → SSH 키 배포
+- Deploy Server 구축 (infra/deploy-server/)
+  - Flask 9000포트, /health + /deploy 엔드포인트, X-Deploy-Token 인증
+  - DEPLOY_TOKEN 하드코딩 → Secrets Manager(lifesync/deploy-token) → /etc/deploy-server/env 분리
+- setup-ssh-keys.sh: mkdir -p ~/.ssh 누락 수정, ~/.vault_pass 없을 때 안전 처리
+- hosts.yml: ls-db / ls-token에 ansible_ssh_common_args ProxyJump(via ls-api) 추가
+
 ---
 
 ## 배포 전 필수 처리 항목
@@ -362,11 +378,13 @@ ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --ask-vault-pas
 | PII 암호화 | ~~온프레미스~~ ✅ 완료 | pii-encryption-guide.md |
 | Ansible Vault encrypt 실행 | ~~온프레미스~~ ✅ 완료 | Step 9 |
 | taskdef.json ACCOUNT_ID 치환 | ~~배포 담당자~~ ✅ 완료 | platform + admin 총 11곳 |
-| Secrets Manager 값 입력 | 배포 담당자 | cloud-deploy-procedure.md 2단계 |
+| Secrets Manager 값 입력 (lifesync/aurora, jwt, redis, admin) | 배포 담당자 | cloud-deploy-procedure.md 2단계 |
+| Secrets Manager 값 입력 (lifesync/ansible-vault, ansible-vm, deploy-token) | 배포 담당자 | Control Node IaC 배포 전 필수 |
 | GitHub Secrets 등록 | 배포 담당자 | AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY |
 | Parameter Store 등록 | 배포 담당자 | /lifesync360/ecr-uri / ecr-uri-admin |
 | CloudFormation 스택 배포 | IaC 담당자 | cloud-deploy-procedure.md |
 | Lambda TGW Attachment | IaC 담당자 | lambda-to-onprem-network.md |
+| 동의 고객 선별 Lambda 구현 | 개발 | ETL 파이프라인 AWS→GCP 전송 전 consent 필터링 |
 | settings 포인트 Aurora 연동 | 개발 | /api/points 엔드포인트 추가 |
 | /api/my-products 운영 연결 | 개발 | Aurora consent 테이블 체크 |
 | upgrade_actions 운영 연결 | 개발 | DynamoDB/Aurora 실데이터 ctx |

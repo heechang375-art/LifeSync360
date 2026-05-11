@@ -11,6 +11,10 @@
 | Dockerfile gunicorn 전환 | platform, admin 모두 완료 |
 | PII 암호화 | 온프레미스 DB 100만 건 암호화 완료 |
 | Ansible Vault | private_api, tokenization 암호화 완료 |
+| EC2 Control Node IaC | infra/compute/control-node.yaml (CloudFormation) 작성 완료 |
+| Deploy Server | infra/deploy-server/ — Flask 9000, systemd, SSH 키 배포 스크립트 |
+| DEPLOY_TOKEN 보안 처리 | Secrets Manager(lifesync/deploy-token) → /etc/deploy-server/env 분리 |
+| hosts.yml ProxyJump | ls-db / ls-token ansible_ssh_common_args 추가 (ls-api 경유) |
 
 ---
 
@@ -24,8 +28,12 @@ CloudFormation/Terraform 스택 배포 후 Aurora, Redis 엔드포인트 확정�
 | `lifesync/jwt` | `{"secret":"..."}` | platform |
 | `lifesync/redis` | `{"host":"..."}` | platform |
 | `lifesync/admin` | `{"username":"...","password":"...","secret_key":"..."}` | admin |
+| `lifesync/ansible-vault` | `{"password":"..."}` | Control Node UserData — vault.yml 복호화 |
+| `lifesync/ansible-vm` | `{"password":"..."}` | Control Node UserData — ssh-copy-id 초기 배포 |
+| `lifesync/deploy-token` | `{"token":"..."}` | Control Node Deploy Server — X-Deploy-Token 인증 |
 
 ```bash
+# 플랫폼/어드민
 aws secretsmanager create-secret \
   --name lifesync/aurora \
   --secret-string '{"host":"<Aurora 엔드포인트>","user":"<DB 유저>","password":"<DB 패스워드>"}'
@@ -41,6 +49,22 @@ aws secretsmanager create-secret \
 aws secretsmanager create-secret \
   --name lifesync/admin \
   --secret-string '{"username":"<관리자 계정>","password":"<관리자 패스워드>","secret_key":"<Flask 세션 키>"}'
+
+# Control Node (IaC 배포 전 필수)
+aws secretsmanager create-secret \
+  --name lifesync/ansible-vault \
+  --secret-string '{"password":"<Ansible Vault 패스워드>"}' \
+  --region ap-northeast-2
+
+aws secretsmanager create-secret \
+  --name lifesync/ansible-vm \
+  --secret-string '{"password":"<온프레미스 ansible 계정 패스워드>"}' \
+  --region ap-northeast-2
+
+aws secretsmanager create-secret \
+  --name lifesync/deploy-token \
+  --secret-string '{"token":"<X-Deploy-Token 값>"}' \
+  --region ap-northeast-2
 ```
 
 ---
