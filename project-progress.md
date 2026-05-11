@@ -77,6 +77,9 @@ VirtualBox → 파일 → 호스트 네트워크 관리자 → 만들기
 
 공통 설정: Ubuntu 22.04 / 어댑터1=NAT / 어댑터2=Host-Only(192.168.56.x 고정 IP)
 
+> **ls-api 전용 추가 설정**: VPN 터널용 브리지 어댑터 필요.
+> `VirtualBox → ls-api VM → 설정 → 네트워크 → 어댑터3 → 브리지 어댑터 → 실제 NIC 선택 (Wi-Fi 또는 이더넷)`
+
 ---
 
 ### Step 2 — VM 공통 초기 설정 (각 VM에서)
@@ -97,6 +100,17 @@ network:
       addresses: [192.168.56.11/24]
 EOF
 sudo netplan apply
+
+# 설정 확인
+ip addr show enp0s8
+# → 192.168.56.x/24 확인
+```
+
+VirtualBox 공유 폴더(Step 7) 사용을 위한 Guest Additions 설치 (ls-db에서):
+```bash
+sudo apt install -y virtualbox-guest-utils
+sudo usermod -aG vboxsf ansible
+sudo reboot
 ```
 
 ---
@@ -172,6 +186,93 @@ ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --ask-vault-pas
 ssh -i ~/.ssh/lifesync360-onprem.pem ansible@192.168.56.11 "sudo systemctl status mysql"
 ssh -i ~/.ssh/lifesync360-onprem.pem ansible@192.168.56.12 "sudo systemctl status tokenization"
 ssh -i ~/.ssh/lifesync360-onprem.pem ansible@192.168.56.13 "sudo systemctl status private-api nginx"
+```
+
+---
+
+### Step 5-1 — AWS Site-to-Site VPN 설정 (ls-api ↔ AWS TGW)
+
+> 상세 내용 및 트러블슈팅은 `aws-vpn-setup.md` 참고.
+
+**① ls-api에 StrongSwan 설치**
+```bash
+ssh ansible@192.168.56.13
+sudo apt update && sudo apt install -y strongswan strongswan-pki libcharon-extra-plugins
+```
+
+**② 브리지 어댑터 IP 및 공인 IP 확인**
+```bash
+# 브리지 어댑터 IP (enp0s9, left= 값)
+ip addr show enp0s9 | grep 'inet '
+# → 예: 172.16.1.73
+
+# 공유기 공인 IP (leftid= 값, AWS Customer Gateway에 등록할 IP)
+curl ifconfig.me
+```
+
+**③ AWS 콘솔 — Customer Gateway 및 VPN Connection 생성**
+```
+VPC → Customer Gateways → Create
+  IP Address: ②의 공인 IP
+  BGP ASN: 65000
+
+VPC → Site-to-Site VPN → Create
+  Customer Gateway: 위에서 생성한 것
+  Transit Gateway 선택
+  Routing: Static
+  Static IP Prefixes: <브리지 어댑터 IP>/32  (예: 172.16.1.73/32)
+
+생성 후 → Download Configuration → Vendor: Generic
+  → 파일에서 터널 IP(Outside IP)와 PSK 값 확인
+```
+
+**④ /etc/ipsec.conf 설정**
+```bash
+sudo tee /etc/ipsec.conf << 'EOF'
+config setup
+    charondebug="ike 2, knl 2, cfg 2"
+
+conn aws-vpn
+    authby=secret
+    left=<브리지 어댑터 IP>
+    leftid=<공유기 공인 IP>
+    leftsubnet=<브리지 어댑터 IP>/32
+    right=<AWS VPN 터널 IP>
+    rightsubnet=<Management VPC CIDR>
+    ike=aes256-sha256-modp2048
+    esp=aes256-sha256
+    keyingtries=%forever
+    keyexchange=ikev2
+    forceencaps=yes
+    auto=start
+EOF
+```
+
+**⑤ /etc/ipsec.secrets 설정**
+```bash
+sudo tee /etc/ipsec.secrets << 'EOF'
+<공유기 공인 IP> <AWS VPN 터널 IP> : PSK "<다운로드한 PSK값>"
+EOF
+sudo chmod 600 /etc/ipsec.secrets
+```
+
+**⑥ IP 포워딩 및 StrongSwan 시작**
+```bash
+echo "net.ipv4.ip_forward = 1" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+
+sudo systemctl enable strongswan-starter
+sudo systemctl restart strongswan-starter
+```
+
+**⑦ 연결 확인**
+```bash
+sudo ipsec status
+# → aws-vpn[1]: ESTABLISHED ... 확인
+# → aws-vpn{1}: INSTALLED, TUNNEL 확인
+
+# EC2 Control Node까지 통신 확인 (VPN 연결 후)
+ping <EC2 Private IP>
 ```
 
 ---
@@ -367,6 +468,10 @@ curl http://192.168.56.13/internal/customer/G000000001
 
 ```bash
 # ls-vpngw에서
+# vault 패스워드 파일 생성 (Ansible 실행 시 자동 참조)
+echo "<vault 패스워드>" > ~/.vault_pass
+chmod 600 ~/.vault_pass
+
 cd /opt/ansible/onprem-prod-repo
 
 # tokenization vault
@@ -386,8 +491,6 @@ git push
 ```bash
 ansible-playbook ansible/site.yml -i ansible/inventory/hosts.yml --ask-vault-pass
 ```
-
----
 
 ---
 
@@ -465,13 +568,19 @@ aws cloudformation deploy \
   --region ap-northeast-2
 ```
 
-배포 후 EC2 Private IP 확인 (vars.yml 업데이트에 필요):
+배포 후 EC2 정보 확인 (Step 12 SSM 접속 및 Step 13 vars.yml 업데이트에 필요):
 ```bash
 aws cloudformation describe-stacks \
   --stack-name lifesync-control-node \
   --query 'Stacks[0].Outputs' \
   --region ap-northeast-2
-# → PrivateIp, DeployServerUrl 출력
+# → InstanceId, PrivateIp, DeployServerUrl 출력
+
+# InstanceId만 추출
+aws cloudformation describe-stacks \
+  --stack-name lifesync-control-node \
+  --query 'Stacks[0].Outputs[?OutputKey==`InstanceId`].OutputValue' \
+  --output text --region ap-northeast-2
 ```
 
 ---
@@ -575,11 +684,17 @@ VPN_CONNECTION_ID=vpn-xxxxxxxxx bash scripts/update-vpn-tunnel.sh
 출력에 `ESTABLISHED` 확인되면 VPN 연결 완료.
 연결 실패 시 → `local-test-troubleshooting.md` "IaC 재배포 후 VPN 터널 끊김" 항목 참고.
 
-### 2단계 — Ansible 연결 확인 (EC2 Control Node에서)
+### 2단계 — EC2 Control Node 접속 (Control Node 재생성 시 InstanceId 갱신)
 
 ```bash
+# Control Node 재생성 시 새 InstanceId 조회
+INSTANCE_ID=$(aws cloudformation describe-stacks \
+  --stack-name lifesync-control-node \
+  --query 'Stacks[0].Outputs[?OutputKey==`InstanceId`].OutputValue' \
+  --output text --region ap-northeast-2)
+
 # SSM으로 EC2 접속
-aws ssm start-session --target <InstanceId> --region ap-northeast-2
+aws ssm start-session --target $INSTANCE_ID --region ap-northeast-2
 
 # 온프레미스 VM 연결 확인
 ansible all -m ping \
