@@ -1,0 +1,85 @@
+version: 0.2
+
+env:
+  variables:
+    CONTAINER_NAME: admin
+    CLUSTER_NAME: lifesync-dev-21-lifesync-ecs-existing-vpc-v4-EcsCluster-ZRqOqKu4Gzpb
+    SERVICE_NAME: lifesync-admin-svc
+  parameter-store:
+    ECR_URI: /lifesync360/ecr-uri-admin
+
+phases:
+  pre_build:
+    commands:
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_URI
+      - export IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c1-8)
+
+  build:
+    commands:
+      - docker build -t $ECR_URI:$IMAGE_TAG .
+      - docker tag $ECR_URI:$IMAGE_TAG $ECR_URI:latest
+
+  post_build:
+    commands:
+      - docker push $ECR_URI:$IMAGE_TAG
+      - docker push $ECR_URI:latest
+      - printf '[{"name":"%s","imageUri":"%s:%s"}]' $CONTAINER_NAME $ECR_URI $IMAGE_TAG > imagedefinitions.json
+      - |
+        aws application-autoscaling register-scalable-target \
+          --service-namespace ecs \
+          --resource-id service/$CLUSTER_NAME/$SERVICE_NAME \
+          --scalable-dimension ecs:service:DesiredCount \
+          --min-capacity 1 --max-capacity 2 \
+          --region $AWS_DEFAULT_REGION
+      - |
+        aws application-autoscaling put-scaling-policy \
+          --service-namespace ecs \
+          --resource-id service/$CLUSTER_NAME/$SERVICE_NAME \
+          --scalable-dimension ecs:service:DesiredCount \
+          --policy-name lifesync-admin-scale-out \
+          --policy-type StepScaling \
+          --step-scaling-policy-configuration '{"AdjustmentType":"ChangeInCapacity","Cooldown":60,"StepAdjustments":[{"MetricIntervalLowerBound":0,"ScalingAdjustment":1}]}' \
+          --region $AWS_DEFAULT_REGION
+      - |
+        aws application-autoscaling put-scaling-policy \
+          --service-namespace ecs \
+          --resource-id service/$CLUSTER_NAME/$SERVICE_NAME \
+          --scalable-dimension ecs:service:DesiredCount \
+          --policy-name lifesync-admin-scale-in \
+          --policy-type StepScaling \
+          --step-scaling-policy-configuration '{"AdjustmentType":"ChangeInCapacity","Cooldown":300,"StepAdjustments":[{"MetricIntervalUpperBound":0,"ScalingAdjustment":-1}]}' \
+          --region $AWS_DEFAULT_REGION
+      - |
+        SCALE_OUT_ARN=$(aws application-autoscaling describe-scaling-policies \
+          --service-namespace ecs \
+          --resource-id service/$CLUSTER_NAME/$SERVICE_NAME \
+          --query 'ScalingPolicies[?PolicyName==`lifesync-admin-scale-out`].PolicyARN' \
+          --output text --region $AWS_DEFAULT_REGION)
+        aws cloudwatch put-metric-alarm \
+          --alarm-name lifesync-admin-cpu-high \
+          --metric-name CPUUtilization \
+          --namespace AWS/ECS \
+          --dimensions Name=ClusterName,Value=$CLUSTER_NAME Name=ServiceName,Value=$SERVICE_NAME \
+          --statistic Average --period 60 --evaluation-periods 2 \
+          --threshold 70 --comparison-operator GreaterThanThreshold \
+          --alarm-actions $SCALE_OUT_ARN \
+          --region $AWS_DEFAULT_REGION
+      - |
+        SCALE_IN_ARN=$(aws application-autoscaling describe-scaling-policies \
+          --service-namespace ecs \
+          --resource-id service/$CLUSTER_NAME/$SERVICE_NAME \
+          --query 'ScalingPolicies[?PolicyName==`lifesync-admin-scale-in`].PolicyARN' \
+          --output text --region $AWS_DEFAULT_REGION)
+        aws cloudwatch put-metric-alarm \
+          --alarm-name lifesync-admin-cpu-low \
+          --metric-name CPUUtilization \
+          --namespace AWS/ECS \
+          --dimensions Name=ClusterName,Value=$CLUSTER_NAME Name=ServiceName,Value=$SERVICE_NAME \
+          --statistic Average --period 60 --evaluation-periods 10 \
+          --threshold 30 --comparison-operator LessThanThreshold \
+          --alarm-actions $SCALE_IN_ARN \
+          --region $AWS_DEFAULT_REGION
+
+artifacts:
+  files:
+    - imagedefinitions.json

@@ -158,3 +158,82 @@ DeploymentConfiguration:
   MinimumHealthyPercent: 0
   MaximumPercent: 200
 ```
+
+---
+
+## 9. 어드민 플랫폼 CI/CD 인프라 신규 구성
+
+> 플랫폼과 동일한 패턴으로 어드민 전용 파이프라인 구성 필요.
+
+### 9-1. ECR 리포지토리
+
+| 리포명 | 용도 |
+|--------|------|
+| `lifesync-dev-admin-service` | 어드민 플랫폼 Docker 이미지 |
+
+### 9-2. CodeCommit 리포지토리
+
+| 리포명 | 용도 |
+|--------|------|
+| `lifesync360-admin` | GitHub `admin-platform/` 폴더 미러링 대상 |
+
+### 9-3. SSM Parameter Store
+
+| 파라미터 이름 | 타입 | 값 |
+|--------------|------|-----|
+| `/lifesync360/ecr-uri-admin` | String | `354493396671.dkr.ecr.ap-northeast-2.amazonaws.com/lifesync-dev-admin-service` |
+
+```yaml
+EcrUriAdminParameter:
+  Type: AWS::SSM::Parameter
+  Properties:
+    Name: /lifesync360/ecr-uri-admin
+    Type: String
+    Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/lifesync-dev-admin-service
+```
+
+### 9-4. CodeBuild 프로젝트
+
+| 항목 | 값 |
+|------|-----|
+| 프로젝트명 | `lifesync-admin-build` |
+| 소스 | CodeCommit `lifesync360-admin` |
+| BuildSpec 경로 | `deploy/buildspec.yml` |
+| 실행 역할 | `lifesync-dev-codebuild-role` (기존 플랫폼과 동일) |
+
+### 9-5. CodePipeline
+
+| 항목 | 값 |
+|------|-----|
+| 파이프라인명 | `lifesync-admin-pipeline` |
+| Source | CodeCommit `lifesync360-admin` (main 브랜치) |
+| Build | CodeBuild `lifesync-admin-build` |
+| Deploy | Amazon ECS — 클러스터: 기존, 서비스: `lifesync-admin-svc` |
+
+### 9-6. ECS 서비스
+
+| 항목 | 값 |
+|------|-----|
+| 서비스명 | `lifesync-admin-svc` |
+| 클러스터 | 기존 (`lifesync-dev-21-lifesync-ecs-existing-vpc-v4-EcsCluster-ZRqOqKu4Gzpb`) |
+| 태스크 정의명 | `lifesync-admin-td` |
+| 초기 DesiredCount | `0` (플랫폼과 동일하게 CI/CD 첫 실행 시 AS가 1로 올림) |
+| 포트 | 80 |
+
+태스크 정의 파일: `docs/new-taskdef-admin.json` 참고
+
+```yaml
+DeploymentConfiguration:
+  MinimumHealthyPercent: 0
+  MaximumPercent: 200
+```
+
+### 9-7. CloudWatch Log Group
+
+```yaml
+AdminLogGroup:
+  Type: AWS::Logs::LogGroup
+  Properties:
+    LogGroupName: /ecs/lifesync-admin
+    RetentionInDays: 30
+```
