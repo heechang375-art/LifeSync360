@@ -797,6 +797,19 @@ ansible all -m ping \
 
 ### 2026-05-12
 
+- Platform CI/CD 파이프라인 전체 트러블슈팅 및 정상화
+  - GitHub Secrets 오염 (Excel `+`→`=` 변환) 수정, IAM 액세스 키 재발급
+  - buildspec 경로 `deploy/buildspec.yml`로 이동, `imagedefinitions.json` 포맷 수정
+  - CodeBuild Role SSM/AS/CloudWatch 권한 추가 (`docs/codebuild-role-policy.json`)
+  - CodePipeline Role S3 아티팩트 권한 추가
+  - buildspec env에 실제 클러스터/서비스명 하드코딩 수정
+  - Application Auto Scaling post_build 등록 (CPU 70% scale-out / 30% scale-in, min 1 / max 4)
+  - ECS 태스크 exit 3 원인: `JWT_SECRET` 미설정 → SSM `/lifesync360/jwt-secret` 생성, 태스크 정의 revision 6 등록 (JWT_SECRET secret, USE_MOCK=true, CloudWatch 로그 설정)
+  - ECS Execution Role SSM 권한 추가
+  - 포트 불일치 수정: ALB 타겟 그룹이 80 고정이라 Dockerfile Gunicorn 바인딩 포트를 8000 → 80으로 수정
+  - ECS 배포 설정 `minimumHealthyPercent=0, maximumPercent=200` 수정 (롤링 업데이트 가능하도록)
+  - 트러블슈팅 문서: `docs/cicd-troubleshooting-and-iac-tasks.md`
+  - IaC 전달 항목: `docs/iac-tasks.md` (Execution Role, SSM, 태스크 정의, Log Group, 배포 설정)
 - update-vpn-tunnel.sh 버그 수정 3건
   - **Windows CRLF `\r` 버그 (IP 미반영 근본 원인)**: Windows AWS CLI가 CRLF로 출력 → `$()` substitution이 `\n`은 제거하지만 `\r`은 남김 → TUNNEL_IP에 `\r` 포함 → sed가 ipsec.conf에 `right=IP\r` 기록 → StrongSwan 파싱 실패. `tr -d '\r'` 추가 (TUNNEL_IP 2곳, PSK SM 조회 1곳)
   - **PSK 조회 로직 재설계**: 기존 ipsec.secrets에서 sed로 PSK 추출하는 방식 제거 → VPN_PSK 환경변수(우선순위 1) / Secrets Manager(우선순위 2) / 없으면 exit 1
