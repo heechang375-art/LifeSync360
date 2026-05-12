@@ -29,6 +29,7 @@
                 </svg>
                 유저 관리
             </a>
+            {% block sidebar_extra %}{% endblock %}
         </nav>
         <div class="sidebar-footer">USE_MOCK: {{ 'ON' if config.USE_MOCK else 'OFF' }}</div>
     </aside>

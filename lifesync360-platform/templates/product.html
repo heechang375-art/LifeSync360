@@ -44,7 +44,18 @@
 </div>
 
 <script>
+    function emitEvent(type, target) {
+        const token = localStorage.getItem('ls_token');
+        if (!token) return;
+        fetch('/api/event', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ event_type: type, event_target: target }),
+        }).catch(() => {});
+    }
+    emitEvent('product_view', '{{ item.name | e }}');
     document.getElementById('apply-btn').addEventListener('click', () => {
+        emitEvent('purchased', '{{ item.name | e }}');
         alert('신청이 접수되었습니다.\n담당자 확인 후 연락드리겠습니다.');
     });
 </script>

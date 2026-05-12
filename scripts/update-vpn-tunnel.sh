@@ -8,8 +8,12 @@
 #   - ~/.ssh/lifesync360-onprem.pem 존재
 #
 # PSK 조회 우선순위:
-#   1. Secrets Manager lifesync/vpn-psk (IaC팀이 등록 후 완전 자동화)
-#   2. ls-api /etc/ipsec.secrets 기존 PSK 추출 (임시, PSK 불변 보장 안 됨)
+#   1. 환경변수 VPN_PSK 직접 지정 (SM 미등록 시 임시 사용)
+#   2. Secrets Manager lifesync/vpn-psk (등록 후 완전 자동화)
+#
+# 사용법:
+#   VPN_PSK="my-psk-value" bash scripts/update-vpn-tunnel.sh
+#   VPN_CONNECTION_ID=vpn-xxxxxxxxx bash scripts/update-vpn-tunnel.sh
 
 set -euo pipefail
 
@@ -21,9 +25,9 @@ LS_API_USER="ansible"
 SSH_KEY="${HOME}/.ssh/lifesync360-onprem.pem"
 AWS_REGION="ap-northeast-2"
 
-# 환경변수로 VPN Connection ID 직접 지정 가능 (태그 조회 실패 시 사용)
-# 사용법: VPN_CONNECTION_ID=vpn-xxxxxxxxx ./update-vpn-tunnel.sh
+# 환경변수로 직접 지정 가능
 VPN_CONNECTION_ID="${VPN_CONNECTION_ID:-}"
+VPN_PSK="${VPN_PSK:-}"             # 직접 PSK 주입 — SM 미등록 시 사용
 
 # ── SSH 옵션 ──────────────────────────────────────────────────────
 SSH_OPTS="-o ConnectTimeout=10 -o StrictHostKeyChecking=no -o BatchMode=yes"
@@ -51,6 +55,7 @@ TUNNEL_IP=$(aws ec2 describe-vpn-connections \
     $QUERY_ARGS \
     --query 'VpnConnections[?State==`available`] | [0].VgwTelemetry[?Status==`UP`] | [0].OutsideIpAddress' \
     --output text 2>/dev/null || echo "None")
+TUNNEL_IP=$(echo "$TUNNEL_IP" | tr -d '\r')
 
 # UP 없으면 첫 번째 터널로 폴백
 if [ "$TUNNEL_IP" = "None" ] || [ -z "$TUNNEL_IP" ]; then
@@ -60,6 +65,7 @@ if [ "$TUNNEL_IP" = "None" ] || [ -z "$TUNNEL_IP" ]; then
         $QUERY_ARGS \
         --query 'VpnConnections[?State==`available`] | [0].VgwTelemetry[0].OutsideIpAddress' \
         --output text 2>/dev/null || echo "None")
+    TUNNEL_IP=$(echo "$TUNNEL_IP" | tr -d '\r')
 fi
 
 if [ "$TUNNEL_IP" = "None" ] || [ -z "$TUNNEL_IP" ]; then
@@ -78,8 +84,13 @@ echo ""
 echo "[2/4] PSK 조회..."
 PSK=""
 
-# Secrets Manager 시도 (IaC팀이 등록한 경우)
-if aws secretsmanager describe-secret \
+# 우선순위 1: 환경변수 직접 주입
+if [ -n "$VPN_PSK" ]; then
+    PSK="$VPN_PSK"
+    echo "  ✓ PSK: 환경변수(VPN_PSK) 사용"
+
+# 우선순위 2: Secrets Manager
+elif aws secretsmanager describe-secret \
     --secret-id "$SM_PSK_SECRET" \
     --region "$AWS_REGION" > /dev/null 2>&1; then
     PSK=$(aws secretsmanager get-secret-value \
@@ -87,18 +98,13 @@ if aws secretsmanager describe-secret \
         --region "$AWS_REGION" \
         --query SecretString --output text \
         | python3 -c "import sys,json; print(json.load(sys.stdin)['psk'])")
+    PSK=$(echo "$PSK" | tr -d '\r')
     echo "  ✓ PSK: Secrets Manager(${SM_PSK_SECRET}) 조회 완료"
+
 else
-    # ls-api ipsec.secrets에서 현재 PSK 추출
-    PSK=$(ssh $SSH_OPTS "${LS_API_USER}@${LS_API_IP}" \
-        "sudo sed -n 's/.*PSK \"\(.*\)\".*/\1/p' /etc/ipsec.secrets 2>/dev/null" || true)
-    if [ -n "$PSK" ]; then
-        echo "  ✓ PSK: ls-api ipsec.secrets 기존 값 유지"
-        echo "  [주의] IaC 재배포 시 PSK가 변경됐을 수 있음"
-        echo "         VPN 연결 실패 시 CF 설정 파일에서 PSK 수동 확인 후 재실행"
-    else
-        echo "  [경고] PSK 조회 실패 — ipsec.secrets의 IP 필드만 교체"
-    fi
+    echo "  [경고] PSK 없음 — VPN_PSK 환경변수로 전달하거나 SM에 등록하세요"
+    echo "  예: VPN_PSK=\"your-psk\" bash scripts/update-vpn-tunnel.sh"
+    exit 1
 fi
 
 # ── [3/4] ls-api 접속 확인 ───────────────────────────
@@ -123,21 +129,13 @@ ssh $SSH_OPTS "${LS_API_USER}@${LS_API_IP}" \
     "sudo sed -i '/right=/s/=.*/=${TUNNEL_IP}/' /etc/ipsec.conf"
 echo "  ✓ ipsec.conf: right=${TUNNEL_IP}"
 
-# ipsec.secrets 업데이트
-if [ -n "$PSK" ]; then
-    LEFTID=$(ssh $SSH_OPTS "${LS_API_USER}@${LS_API_IP}" \
-        "sudo awk 'NF>0{print \$1; exit}' /etc/ipsec.secrets")
-    # printf로 PSK 내 특수문자 안전하게 처리, 파이프로 전달 (커맨드라인 노출 없음)
-    printf '%s %s : PSK "%s"\n' "$LEFTID" "$TUNNEL_IP" "$PSK" | \
-        ssh $SSH_OPTS "${LS_API_USER}@${LS_API_IP}" \
-        "sudo tee /etc/ipsec.secrets > /dev/null && sudo chmod 600 /etc/ipsec.secrets"
-    echo "  ✓ ipsec.secrets: 전체 업데이트"
-else
-    # PSK 미확인 — IP 필드만 교체 (PSK 부분 보존)
+# ipsec.secrets 업데이트 (PSK 보장된 상태 — 항상 전체 교체)
+LEFTID=$(ssh $SSH_OPTS "${LS_API_USER}@${LS_API_IP}" \
+    "sudo awk 'NF>0 && \$1 !~ /^#/ {print \$1; exit}' /etc/ipsec.secrets")
+printf '%s %s : PSK "%s"\n' "$LEFTID" "$TUNNEL_IP" "$PSK" | \
     ssh $SSH_OPTS "${LS_API_USER}@${LS_API_IP}" \
-        "sudo sed -i 's/^\([^ ]*\) [^ ]*/\1 ${TUNNEL_IP}/' /etc/ipsec.secrets"
-    echo "  ✓ ipsec.secrets: IP만 교체 (PSK 보존)"
-fi
+    "sudo tee /etc/ipsec.secrets > /dev/null && sudo chmod 600 /etc/ipsec.secrets"
+echo "  ✓ ipsec.secrets: ${LEFTID} ${TUNNEL_IP} : PSK \"***\""
 
 # StrongSwan 재시작
 echo "  StrongSwan 재시작 중..."

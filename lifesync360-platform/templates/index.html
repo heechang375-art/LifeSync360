@@ -225,7 +225,7 @@
                 catEl.innerHTML = `
                     <div class="home-rec-cat-label">${cat.name}</div>
                     ${topProducts.map(p => `
-                        <a class="home-rec-item" href="/product/${p.id}">
+                        <a class="home-rec-item" href="/product/${p.id}" onclick="emitEvent('recommendation_click', this.querySelector('.home-rec-item-name').textContent)">
                             <span class="home-rec-item-name">${p.name}</span>
                             ${p.tag ? `<span class="home-rec-item-tag">${p.tag}</span>` : ''}
                         </a>
@@ -280,6 +280,7 @@
             document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
             btn.classList.add('active');
             document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
+            emitEvent('tab_click', btn.dataset.tab);
         });
     });
 
@@ -289,6 +290,14 @@
             document.querySelectorAll('#tab-recommend .company-panel').forEach(p => p.classList.remove('active'));
             btn.classList.add('active');
             document.getElementById(`rec-${btn.dataset.rec}`).classList.add('active');
+            emitEvent('tab_click', btn.textContent.trim());
+        });
+    });
+
+    document.querySelectorAll('#tab-recommend .rank-item').forEach(a => {
+        a.addEventListener('click', () => {
+            const name = a.querySelector('.rank-name')?.textContent.trim();
+            if (name) emitEvent('recommendation_click', name);
         });
     });
 
@@ -343,6 +352,16 @@
         document.getElementById('grade-badge').style.display = '';
         document.getElementById('header-logo').style.display = '';
         document.getElementById('header-my-company').style.display = 'none';
+    }
+
+    function emitEvent(eventType, eventTarget) {
+        const token = localStorage.getItem('ls_token');
+        if (!token) return;
+        fetch('/api/event', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ event_type: eventType, event_target: eventTarget }),
+        }).catch(() => {});
     }
 
     document.querySelectorAll('.toggle-btn').forEach(btn => {

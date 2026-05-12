@@ -27,7 +27,7 @@ COMPANIES = [
     {'key': 'bank',       'name': 'LS 은행'},
     {'key': 'card',       'name': 'LS 카드'},
     {'key': 'insurance',  'name': 'LS 보험'},
-    {'key': 'inet_ins',   'name': 'LS 온라인보험'},
+    {'key': 'internet_insurance',   'name': 'LS 온라인보험'},
     {'key': 'securities', 'name': 'LS 증권'},
     {'key': 'healthcare', 'name': 'LS 헬스케어'},
     {'key': 'hospital',   'name': 'LS 병원'},
@@ -37,7 +37,7 @@ CONSENTS = [
     {'key': 'bank',       'label': '은행 데이터 활용 동의'},
     {'key': 'card',       'label': '카드 데이터 활용 동의'},
     {'key': 'insurance',  'label': '보험 데이터 활용 동의'},
-    {'key': 'inet_ins',   'label': '온라인 보험 데이터 활용 동의'},
+    {'key': 'internet_insurance',   'label': '온라인 보험 데이터 활용 동의'},
     {'key': 'securities', 'label': '증권 데이터 활용 동의'},
     {'key': 'healthcare', 'label': '헬스케어 데이터 활용 동의'},
     {'key': 'hospital',   'label': '병원 데이터 활용 동의'},
@@ -264,6 +264,48 @@ def api_consent():
     return jsonify({'status': 'ok'})
 
 
+@app.route('/api/event', methods=['POST'])
+def api_event():
+    auth  = request.headers.get('Authorization', '')
+    token = auth.removeprefix('Bearer ').strip()
+    try:
+        payload = decode_jwt(token)
+    except jwt.InvalidTokenError:
+        return jsonify({'error': 'invalid token'}), 401
+
+    if USE_MOCK:
+        return jsonify({'status': 'ok'})
+
+    data         = request.get_json() or {}
+    event_type   = data.get('event_type', '')
+    event_target = data.get('event_target', '')
+    global_id    = payload['gid']
+
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                'INSERT INTO customer_event_log (global_id, event_type, event_target) VALUES (%s, %s, %s)',
+                (global_id, event_type, event_target)
+            )
+            if event_type == 'recommendation_click':
+                cur.execute(
+                    'UPDATE customer_recommend_history SET clicked_at = NOW() '
+                    'WHERE global_id = %s AND product_name = %s AND clicked_at IS NULL LIMIT 1',
+                    (global_id, event_target)
+                )
+            elif event_type == 'purchased':
+                cur.execute(
+                    'UPDATE customer_recommend_history SET purchased_at = NOW() '
+                    'WHERE global_id = %s AND product_name = %s AND purchased_at IS NULL LIMIT 1',
+                    (global_id, event_target)
+                )
+        db.commit()
+    finally:
+        db.close()
+    return jsonify({'status': 'ok'})
+
+
 @app.route('/api/recommendations')
 def api_recommendations():
     auth  = request.headers.get('Authorization', '')
@@ -316,6 +358,13 @@ def api_recommendations():
                     ORDER BY pm.product_id LIMIT 50
                 """, accessible)
             products = cur.fetchall()
+            now = datetime.datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            for p in products:
+                cur.execute(
+                    'INSERT INTO customer_recommend_history (global_id, product_name, affiliate_id, recommended_at) VALUES (%s, %s, %s, %s)',
+                    (global_id, p['product_name'], p['company_id'], now)
+                )
+        db.commit()
     finally:
         db.close()
 

@@ -553,67 +553,99 @@ aws secretsmanager update-secret \
 
 ---
 
-### Step 11 — EC2 Control Node CloudFormation 배포
+### Step 11 — EC2 Control Node CloudFormation 배포 (14a → 14b → 14c)
 
-> VPN이 연결된 상태에서 배포해야 UserData [5/6] SSH 키 배포 단계가 성공함.
+> IAM(14a) → EC2(14b) → SSM Association(14c) 순서로 배포. 14b 출력을 14c에 넘겨야 하므로 반드시 순서 지킬 것.
 
 ```bash
+# ── 14a: IAM 롤 + 인스턴스 프로파일 ──────────────────────────────
 aws cloudformation deploy \
-  --template-file infra/compute/control-node.yaml \
-  --stack-name lifesync-control-node \
-  --parameter-overrides \
-    SubnetId=<Management VPC 서브넷 ID> \
-    VpcId=<Management VPC ID> \
+  --template-file 14a-ansible-iam.yaml \
+  --stack-name lifesync-dev-ansible-iam \
   --capabilities CAPABILITY_NAMED_IAM \
   --region ap-northeast-2
-```
 
-배포 후 EC2 정보 확인 (Step 12 SSM 접속 및 Step 13 vars.yml 업데이트에 필요):
-```bash
-aws cloudformation describe-stacks \
-  --stack-name lifesync-control-node \
-  --query 'Stacks[0].Outputs' \
+# 14a 출력 확인 (14b 파라미터에 사용)
+PROFILE_NAME=$(aws cloudformation describe-stacks \
+  --stack-name lifesync-dev-ansible-iam \
+  --query 'Stacks[0].Outputs[?OutputKey==`AnsibleControlNodeInstanceProfileName`].OutputValue' \
+  --output text --region ap-northeast-2)
+echo "Profile: $PROFILE_NAME"
+
+# ── 14b: EC2 + UserData ───────────────────────────────────────────
+# AmiId: EC2 콘솔에서 AL2023 최신 AMI ID 확인
+# ManagementSubnetId: Management VPC private subnet ID
+# ManagementSgId: Management VPC SG ID (SSM 아웃바운드 443 허용 필요)
+aws cloudformation deploy \
+  --template-file 14b-ansible-ec2.yaml \
+  --stack-name lifesync-dev-ansible-ec2 \
+  --parameter-overrides \
+    AmiId=<AL2023 AMI ID> \
+    InstanceType=t3.small \
+    ManagementSubnetId=<Management VPC private subnet ID> \
+    ManagementSgId=<Management VPC SG ID> \
+    AnsibleControlNodeInstanceProfileName=$PROFILE_NAME \
   --region ap-northeast-2
-# → InstanceId, PrivateIp, DeployServerUrl 출력
 
-# InstanceId만 추출
-aws cloudformation describe-stacks \
-  --stack-name lifesync-control-node \
-  --query 'Stacks[0].Outputs[?OutputKey==`InstanceId`].OutputValue' \
-  --output text --region ap-northeast-2
+# 14b 출력 확인 (14c 파라미터에 사용)
+INSTANCE_ID=$(aws cloudformation describe-stacks \
+  --stack-name lifesync-dev-ansible-ec2 \
+  --query 'Stacks[0].Outputs[?OutputKey==`AnsibleControlInstanceId`].OutputValue' \
+  --output text --region ap-northeast-2)
+echo "Instance ID: $INSTANCE_ID"
+
+# ── 14c: SSM Association (공개키 SSM 등록 + 온프레미스 푸시) ──────
+aws cloudformation deploy \
+  --template-file 14c-ansible-key-publish.yaml \
+  --stack-name lifesync-dev-ansible-key-publish \
+  --parameter-overrides \
+    AnsibleControlInstanceId=$INSTANCE_ID \
+  --region ap-northeast-2
 ```
 
 ---
 
 ### Step 12 — Control Node 초기화 확인 및 연결 테스트
 
-UserData 완료까지 약 5~10분 소요. SSM Session Manager로 접속해서 확인.
+UserData 완료까지 약 5~15분 소요 (ansible-core venv 설치 포함). SSM Session Manager로 접속해서 확인.
 
 ```bash
 # SSM으로 접속 (SSH 키 없이)
-aws ssm start-session --target <InstanceId> --region ap-northeast-2
+aws ssm start-session --target <AnsibleControlInstanceId> --region ap-northeast-2
 
-# 초기화 완료 여부 확인
-cat /tmp/control-node-ready       # "done" 이면 정상
-cat /var/log/control-node-init.log  # 상세 로그
+# ── EC2 내부에서 확인 ──────────────────────────────────────────
+# UserData 로그 (14b 완료 시 마지막 줄에 "14b 완료:" 포함됨)
+sudo tail -100 /var/log/ansible-bootstrap.log
 
-# Deploy Server 상태 확인
-sudo systemctl status deploy-server
-curl http://localhost:9000/health
-# → {"status": "ok"}
+# SSH 키 생성 확인
+ls -la /home/ansible/.ssh/
+# → id_rsa (600), id_rsa.pub (644) 존재해야 함
 
-# Ansible 연결 확인
+# Ansible venv 확인
+/opt/ansible-venv/bin/ansible --version
+
+# Ansible 연결 확인 (VPN 연결 상태에서만 성공)
 ansible all -m ping \
   -i /opt/ansible/onprem-prod-repo/ansible/inventory/hosts.yml \
   --vault-password-file ~/.vault_pass
 # → ls-api: pong, ls-db: pong, ls-token: pong 확인
 ```
 
-SSH 키 배포가 실패했을 경우 수동 실행:
+14c SSM Association 결과 확인 (로컬 PC에서):
 ```bash
-# SSM 세션에서
-sudo -u ubuntu bash /opt/ansible/onprem-prod-repo/infra/deploy-server/setup-ssh-keys.sh
-# ANSIBLE_PASS 환경변수 없으면 대화형으로 패스워드 입력
+# 공개키가 SSM Parameter Store에 올라갔는지 확인
+aws ssm get-parameter \
+  --name /lifesync/dev/ansible/public-key \
+  --region ap-northeast-2 \
+  --query Parameter.Value --output text
+# → ssh-rsa AAAA... 형태면 정상
+```
+
+SSH 키 미생성 시 수동 복구 (SSM 세션 내부에서):
+```bash
+sudo install -d -m 0700 -o ansible -g ansible /home/ansible/.ssh
+sudo -u ansible ssh-keygen -t rsa -b 4096 -N "" -f /home/ansible/.ssh/id_rsa -q
+sudo chown -R ansible:ansible /home/ansible/.ssh
 ```
 
 ---
@@ -675,7 +707,11 @@ VirtualBox와 VM을 먼저 켠 후 아래 순서로 진행.
 aws sts get-caller-identity
 
 # 터널 IP 자동 갱신 및 StrongSwan 재시작
+# PSK를 Secrets Manager에 등록한 경우 (lifesync/vpn-psk)
 bash scripts/update-vpn-tunnel.sh
+
+# PSK를 직접 지정할 경우 (SM 미등록 시)
+VPN_PSK="<PSK값>" bash scripts/update-vpn-tunnel.sh
 
 # VPN Name 태그 모를 경우 Connection ID 직접 지정
 VPN_CONNECTION_ID=vpn-xxxxxxxxx bash scripts/update-vpn-tunnel.sh
@@ -687,11 +723,18 @@ VPN_CONNECTION_ID=vpn-xxxxxxxxx bash scripts/update-vpn-tunnel.sh
 ### 2단계 — EC2 Control Node 접속 (Control Node 재생성 시 InstanceId 갱신)
 
 ```bash
-# Control Node 재생성 시 새 InstanceId 조회
-INSTANCE_ID=$(aws cloudformation describe-stacks \
-  --stack-name lifesync-control-node \
-  --query 'Stacks[0].Outputs[?OutputKey==`InstanceId`].OutputValue' \
+# Control Node 재생성 시 새 InstanceId 조회 (EC2 Name 태그 기준)
+INSTANCE_ID=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=lifesync-dev-management-ec2-ansible" \
+            "Name=instance-state-name,Values=running" \
+  --query 'Reservations[0].Instances[0].InstanceId' \
   --output text --region ap-northeast-2)
+
+# 또는 CF Output에서 조회
+# INSTANCE_ID=$(aws cloudformation describe-stacks \
+#   --stack-name lifesync-dev-ansible-ec2 \
+#   --query 'Stacks[0].Outputs[?OutputKey==`AnsibleControlInstanceId`].OutputValue' \
+#   --output text --region ap-northeast-2)
 
 # SSM으로 EC2 접속
 aws ssm start-session --target $INSTANCE_ID --region ap-northeast-2
@@ -752,6 +795,14 @@ ansible all -m ping \
 - MySQL root 비밀번호 재설정 (skip-grant-tables 복구)
 - Site-to-Site VPN BGP → Static 라우팅 전환 (→ aws-vpn-setup.md 문제3 참고)
 
+### 2026-05-12
+
+- update-vpn-tunnel.sh 버그 수정 3건
+  - **Windows CRLF `\r` 버그 (IP 미반영 근본 원인)**: Windows AWS CLI가 CRLF로 출력 → `$()` substitution이 `\n`은 제거하지만 `\r`은 남김 → TUNNEL_IP에 `\r` 포함 → sed가 ipsec.conf에 `right=IP\r` 기록 → StrongSwan 파싱 실패. `tr -d '\r'` 추가 (TUNNEL_IP 2곳, PSK SM 조회 1곳)
+  - **PSK 조회 로직 재설계**: 기존 ipsec.secrets에서 sed로 PSK 추출하는 방식 제거 → VPN_PSK 환경변수(우선순위 1) / Secrets Manager(우선순위 2) / 없으면 exit 1
+  - **ipsec.secrets 업데이트 방식 변경**: sed 패턴 매칭 → printf+tee 전체 교체 (sed는 매칭 실패 시 exit 0 반환으로 오류 감지 불가)
+- docs/control-node-deploy-guide.md 최초 작성 완료 (14a/14b/14c 3단계 배포 가이드, 트러블슈팅, 주요 경로 표)
+
 ### 2026-05-11
 - admin-platform 대시보드 사이드바 탭 네비게이션 개편 (overview 4탭, user_detail 5탭)
 - admin-platform 동의현황 / 추천이력 / 제휴사매핑 / 활성캠페인 / 최근추천 섹션 추가
@@ -763,6 +814,82 @@ ansible all -m ping \
   - DEPLOY_TOKEN 하드코딩 → Secrets Manager(lifesync/deploy-token) → /etc/deploy-server/env 분리
 - setup-ssh-keys.sh: mkdir -p ~/.ssh 누락 수정, ~/.vault_pass 없을 때 안전 처리
 - hosts.yml: ls-db / ls-token에 ansible_ssh_common_args ProxyJump(via ls-api) 추가
+- Ansible 14a/14b/14c IaC 분석 — SSH 키 미생성 원인 파악
+  - 14b UserData 실행 순서: git clone → SSH 키 생성. set -euo pipefail + git clone 실패 시 exit 1 → SSH 키 생성 미실행
+  - git clone 실패 원인: Management VPC private subnet에서 CodeCommit 퍼블릭 엔드포인트 접근 불가 (NAT GW 없음)
+  - 14a IAM: codecommit:GitPush 불필요 (Ansible이 CodeCommit에 push하는 케이스 없음) — 제거 권고
+  - deploy-control-node.sh 불일치 항목 확인: CF Output 키(`InstanceId` → `AnsibleControlInstanceId`), 완료 확인 파일(`/tmp/control-node-ready` — 14b에 없음)
+- Management VPC 네트워크 경로 분석
+  - TGW→VPN은 온프레미스↔AWS 경로, Ansible EC2→CodeCommit 경로와 무관
+  - 기존 01b-lifesync-vpc-endpoints.yaml: LifeSync VPC(ECS)용, CodeCommit/SSM 엔드포인트 없음
+  - Management VPC는 별도 VPC → 전용 VPC Endpoints 파일 신규 작성 필요
+- 01c-management-vpc-endpoints.yaml 작성 완료
+  - S3 Gateway(무료) + SSM×3 + CodeCommit×2 인터페이스 엔드포인트
+  - 예상 비용 ~$36/월 (1 AZ) / NAT GW 있으면 선택사항
+- Ansible 14a/14b/14c IaC 수정 완료
+  - 14a: codecommit:GitPush 제거
+  - 14b: SSH 키 생성 블록을 git clone 앞으로 이동 (순서 역전 버그 수정)
+  - 14b: sudo -u ansible git → sudo -u ansible /usr/bin/git 전체 경로 지정 (sudo env_reset PATH 문제 해결)
+  - 14b: ManagementSubnetId 파라미터 설명 NAT GW → VPC Endpoints 참조로 업데이트
+  - 14c: aws sts get-caller-identity 사전 체크 제거 (STS VPC Endpoint 없이도 동작)
+- 재배포 순서: 14a → 14b → 14b 출력(AnsibleControlInstanceId) 확인 → 14c
+
+---
+
+## 트러블슈팅
+
+### Ansible Control Node SSH 키 미생성 (2026-05-11)
+
+**증상**
+- `/home/ansible/.ssh/id_rsa` 파일이 생성되지 않음
+- 14c SSM Association이 공개키를 SSM Parameter Store에 올리지 못함
+
+**원인 1 — 14b UserData 실행 순서 버그**
+- 원래 순서: `git clone` → `SSH 키 생성`
+- `set -euo pipefail` 상태에서 git clone 실패 시 `exit 1` → SSH 키 생성 코드 미실행
+- 수정: SSH 키 생성 블록을 git clone **앞으로** 이동
+
+**원인 2 — sudo env_reset으로 인한 git PATH 문제**
+- UserData에서 `sudo -u ansible git clone ...` 실행 시 sudo가 PATH 초기화
+- git이 `/usr/bin/git`에 설치돼 있어도 초기화된 PATH에서 못 찾아 `env: 'git': No such file or directory` 발생
+- 수정: `sudo -u ansible git` → `sudo -u ansible /usr/bin/git` 전체 경로 지정
+
+**원인 3 — 14c에서 STS 엔드포인트 필요**
+- `aws sts get-caller-identity` 호출이 퍼블릭 STS 엔드포인트로 나가 VPC Endpoint 없이 실패 가능
+- 수정: 해당 사전 체크 제거 (ssm:PutParameter 자체가 IAM 없으면 어차피 실패)
+
+**확인 방법**
+```bash
+# SSM 세션 접속
+aws ssm start-session --target <AnsibleControlInstanceId> --region ap-northeast-2
+
+# UserData 로그 확인
+sudo tail -100 /var/log/ansible-bootstrap.log
+
+# 키 존재 여부
+ls -la /home/ansible/.ssh/
+
+# SSM에 공개키 올라갔는지
+aws ssm get-parameter \
+  --name /lifesync/dev/ansible/public-key \
+  --region ap-northeast-2 \
+  --query Parameter.Value --output text
+```
+
+**재배포 순서**
+```
+14a → 14b → 14b 출력(AnsibleControlInstanceId) 확인 → 14c
+```
+
+---
+
+### SSM start-session 오류 모음 (2026-05-11)
+
+| 에러 | 원인 | 해결 |
+|------|------|------|
+| `Could not connect to endpoint URL: ssm.ap-northease-2...` | 리전명 오타 (`northease` → `northeast`) | `aws configure set region ap-northeast-2` |
+| `403 Forbidden` | 로컬 IAM 자격증명에 `ssm:StartSession` 권한 없음 | IAM 정책에 ssm:StartSession 추가 또는 admin 프로파일 사용 |
+| `Session Manager plugin not found` | Session Manager Plugin 미설치 | [SessionManagerPluginSetup.exe](https://s3.amazonaws.com/session-manager-downloads/plugin/latest/windows/SessionManagerPluginSetup.exe) 설치 후 터미널 재시작 |
 
 ---
 

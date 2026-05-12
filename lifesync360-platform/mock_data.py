@@ -247,7 +247,7 @@ _FALLBACK = {
         {'id': 'ins_f03', 'type': '생명보험', 'name': '라이프 종신보험', 'desc': '사망+중증질환 / 건강점수 우대', 'tag': '',
          'detail': ['사망 및 중증질환 보장', '건강점수 연동 우대', '비과세 저축기능 포함', '중도해지환급금 있음']},
     ],
-    'inet_ins': [
+    'internet_insurance': [
         {'id': 'inet_f01', 'type': '여행보험', 'name': '다이렉트 여행자보험', 'desc': '하루 1,000원부터', 'tag': '맞춤추천',
          'detail': ['국내외 여행 중 상해·질병 보장', '출발 당일 가입 가능', '1일~90일 단기 선택', '비대면 청구 지원']},
         {'id': 'inet_f02', 'type': '펫보험', 'name': '반려동물 다이렉트', 'desc': '월 2만원대, 통원 포함', 'tag': '',
@@ -286,7 +286,7 @@ def _build_recommendations():
         ('bank',       '은행',      'bank',               5),
         ('card',       '카드',      'card',               4),
         ('insurance',  '보험',      'insurance',          4),
-        ('inet_ins',   '온라인보험', 'internet_insurance', 3),
+        ('internet_insurance',   '온라인보험', 'internet_insurance', 3),
         ('securities', '증권',      'securities',         3),
         ('healthcare', '헬스케어',  'healthcare',         3),
         ('hospital',   'LS 병원',   'hospital',           3),
@@ -344,7 +344,7 @@ def get_mock_upgrade_actions(ls_user_id: str) -> list:
 # ── 계열사 동의 현황 (my-products 접근 제어용) ────────────────────────
 # 상품 표시 동의 (broad) — AI 스코어링 동의(consent_count)와는 별개
 MOCK_CONSENTED_KEYS = {
-    'LS-AABBCC11-000001': {'bank', 'card', 'insurance', 'inet_ins', 'securities', 'healthcare', 'hospital'},
+    'LS-AABBCC11-000001': {'bank', 'card', 'insurance', 'internet_insurance', 'securities', 'healthcare', 'hospital'},
     'LS-DDEEFF22-000002': {'bank', 'card', 'insurance', 'healthcare'},
     'LS-99AABB33-000003': {'bank', 'card', 'healthcare'},
 }
@@ -364,7 +364,7 @@ MOCK_MY_PRODUCTS = {
             {'type': '건강보험', 'name': '건강지킴이 보험', 'meta': '월 보험료 32,000원',  'status': '유지중', 'sc': 'ok'},
             {'type': '실손보험', 'name': '실손 플러스',     'meta': '월 보험료 15,000원',  'status': '유지중', 'sc': 'ok'},
         ],
-        'inet_ins': [
+        'internet_insurance': [
             {'type': '운전자보험', 'name': '운전자보험 다이렉트', 'meta': '연 28,000원', 'status': '유지중', 'sc': 'ok'},
         ],
         'securities': [
@@ -388,7 +388,7 @@ MOCK_MY_PRODUCTS = {
         'insurance': [
             {'type': '건강보험', 'name': '건강지킴이 보험', 'meta': '월 보험료 32,000원 · 4개월째', 'status': '유지중', 'sc': 'ok'},
         ],
-        'inet_ins': [],
+        'internet_insurance': [],
         'securities': [],
         'healthcare': [
             {'type': '건강관리', 'name': '체중관리 AI 코칭', 'meta': '3주차 진행중', 'status': '진행중', 'sc': 'info'},
@@ -403,7 +403,7 @@ MOCK_MY_PRODUCTS = {
             {'type': '체크카드', 'name': '헬스케어 체크카드', 'meta': '이번달 128,000원 사용', 'status': '정상', 'sc': 'ok'},
         ],
         'insurance': [],
-        'inet_ins': [],
+        'internet_insurance': [],
         'securities': [],
         'healthcare': [
             {'type': '검진', 'name': 'VIP 종합 건강검진', 'meta': '예약 대기중', 'status': '대기중', 'sc': 'warn'},

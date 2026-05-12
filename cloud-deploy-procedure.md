@@ -100,9 +100,11 @@ aws cloudformation deploy \
 | 순서 | 파일 | 스택명 |
 |------|------|--------|
 | 27 | infra/optional/vpn.yaml | lifesync-vpn |
-| 28 | infra/optional/vpc-endpoints.yaml | lifesync-vpc-endpoints |
+| 28 | infra/compute/control-node.yaml | lifesync-control-node |
+| 29 | infra/optional/vpc-endpoints.yaml | lifesync-vpc-endpoints |
 
 ```bash
+# 27. VPN
 aws cloudformation deploy \
   --template-file infra/optional/vpn.yaml \
   --stack-name lifesync-vpn \
@@ -110,7 +112,28 @@ aws cloudformation deploy \
     OnPremPublicIp=<온프레미스_공인IP> \
     OnPremCidr=192.168.56.0/24 \
   --region ap-northeast-2
+
+# 28. Control Node (VPN 배포 완료 후)
+VPC_ID=$(aws cloudformation list-exports \
+  --query "Exports[?Name=='lifesync-vpc-VpcId'].Value" \
+  --output text --region ap-northeast-2)
+
+SUBNET_ID=$(aws cloudformation list-exports \
+  --query "Exports[?Name=='lifesync-subnets-AppSubnet1Id'].Value" \
+  --output text --region ap-northeast-2)
+
+aws cloudformation deploy \
+  --template-file infra/compute/control-node.yaml \
+  --stack-name lifesync-control-node \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides \
+    VpcId=$VPC_ID \
+    SubnetId=$SUBNET_ID \
+  --region ap-northeast-2
 ```
+
+> **28번 배포 전에 반드시 Secrets Manager ansible 관련 3개 값 입력 완료**
+> (아래 2단계 ansible 항목 참고)
 
 ---
 
@@ -147,6 +170,22 @@ aws secretsmanager put-secret-value \
 aws secretsmanager put-secret-value \
   --secret-id lifesync/onprem-db \
   --secret-string '{"host":"<온프레미스_DB_IP>","username":"lifesync","password":"<DB_패스워드>","root_password":"<ROOT_패스워드>"}' \
+  --region ap-northeast-2
+
+# Control Node 관련 (28번 스택 배포 전 필수)
+aws secretsmanager put-secret-value \
+  --secret-id lifesync/ansible-vm \
+  --secret-string '{"password":"<온프레미스_ansible_유저_패스워드>"}' \
+  --region ap-northeast-2
+
+aws secretsmanager put-secret-value \
+  --secret-id lifesync/ansible-vault \
+  --secret-string '{"password":"<Ansible_Vault_패스워드>"}' \
+  --region ap-northeast-2
+
+aws secretsmanager put-secret-value \
+  --secret-id lifesync/deploy-token \
+  --secret-string '{"token":"<임의_토큰_문자열>"}' \
   --region ap-northeast-2
 ```
 

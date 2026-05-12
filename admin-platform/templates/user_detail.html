@@ -2,6 +2,16 @@
 {% block title %}{{ user.name }} – Admin{% endblock %}
 {% block page_title %}유저 상세{% endblock %}
 
+{% block sidebar_extra %}
+<div class="sidebar-sep"></div>
+<div class="sidebar-section">섹션</div>
+<div class="sidebar-sub-item active" onclick="showTab(this, 'info')">계정 정보</div>
+<div class="sidebar-sub-item" onclick="showTab(this, 'scores')">AI 분석</div>
+<div class="sidebar-sub-item" onclick="showTab(this, 'consent')">동의 현황</div>
+<div class="sidebar-sub-item" onclick="showTab(this, 'recommend')">추천 이력</div>
+<div class="sidebar-sub-item" onclick="showTab(this, 'identity')">제휴사 매핑</div>
+{% endblock %}
+
 {% block content %}
 <a class="back-link" href="{{ url_for('users') }}">
     <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -10,36 +20,39 @@
     유저 목록으로
 </a>
 
-<div class="three-col">
-    <!-- 유저 정보 -->
-    <div class="card">
-        <div class="card-title">계정 정보</div>
-        <div class="info-row">
-            <span class="info-key">이름</span>
-            <span class="info-val"><strong>{{ user.name }}</strong></span>
-        </div>
-        <div class="info-row">
-            <span class="info-key">이메일</span>
-            <span class="info-val">{{ user.email }}</span>
-        </div>
-        <div class="info-row">
-            <span class="info-key">등급</span>
-            <span class="info-val">
-                <span class="badge badge-{{ user.grade | lower }}">{{ user.grade }}</span>
-            </span>
-        </div>
-        <div class="info-row">
-            <span class="info-key">회원번호</span>
-            <span class="info-val mono">{{ user.ls_user_id }}</span>
-        </div>
-        <div class="info-row">
-            <span class="info-key">Global ID</span>
-            <span class="info-val mono">{{ user.global_id }}</span>
+<div class="detail-content">
+
+    <!-- 계정 정보 -->
+    <div id="sec-info" class="detail-section active">
+        <div class="card">
+            <div class="card-title">계정 정보</div>
+            <div class="info-row">
+                <span class="info-key">이름</span>
+                <span class="info-val"><strong>{{ user.name }}</strong></span>
+            </div>
+            <div class="info-row">
+                <span class="info-key">이메일</span>
+                <span class="info-val">{{ user.email }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-key">등급</span>
+                <span class="info-val">
+                    <span class="badge badge-{{ user.grade | lower }}">{{ user.grade }}</span>
+                </span>
+            </div>
+            <div class="info-row">
+                <span class="info-key">회원번호</span>
+                <span class="info-val mono">{{ user.ls_user_id }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-key">Global ID</span>
+                <span class="info-val mono">{{ user.global_id }}</span>
+            </div>
         </div>
     </div>
 
-    <!-- AI 분석 점수 -->
-    <div>
+    <!-- AI 분석 -->
+    <div id="sec-scores" class="detail-section">
         {% if scores %}
         <div class="card">
             <div class="card-title">AI 분석 점수</div>
@@ -61,9 +74,7 @@
                     <div class="score-item-value">{{ scores.behavior_score or '-' }}</div>
                 </div>
             </div>
-
-            <!-- 확률 바 3종 -->
-            <div style="margin-top:16px; display:flex; flex-direction:column; gap:10px;">
+            <div style="margin-top:20px; display:flex; flex-direction:column; gap:10px;">
                 {% if scores.vip_prob %}
                 {% set vip_pct = (scores.vip_prob | float * 100) | round(0) | int %}
                 <div class="prob-row">
@@ -95,29 +106,127 @@
                 </div>
                 {% endif %}
             </div>
-
             <div class="update-time">마지막 분석: {{ scores.update_time or '-' }}</div>
         </div>
-
         {% if scores.next_best_action %}
         <div class="nba-card">
             <div class="nba-label">AI 추천 액션 (Next Best Action)</div>
             <div class="nba-text">{{ scores.next_best_action }}</div>
         </div>
         {% endif %}
-
         {% else %}
         <div class="no-data-card">
-            <div class="no-data-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:36px;height:36px;stroke:#cbd5e1;margin-bottom:12px;">
-                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-                </svg>
-            </div>
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:36px;height:36px;stroke:#cbd5e1;margin-bottom:12px;">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
             <strong style="color:#64748b;">분석 데이터 없음</strong>
             <p>GCP Vertex AI 분석이 아직 완료되지 않은 유저입니다.</p>
             <p style="margin-top:6px;">매일 새벽 04:00 이후 분석 결과가 반영됩니다.</p>
         </div>
         {% endif %}
     </div>
+
+    <!-- 동의 현황 -->
+    <div id="sec-consent" class="detail-section">
+        <div class="card">
+            <div class="card-title">동의 현황</div>
+            {% if consents %}
+            <div class="consent-grid">
+                {% for c in consents %}
+                <div class="consent-item">
+                    <span class="consent-key">{{ consent_labels.get(c.consent_key, c.consent_key) }}</span>
+                    {% if c.consent_yn == 'Y' %}
+                    <span class="consent-y">동의</span>
+                    {% else %}
+                    <span class="consent-n">미동의</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p style="color:#94a3b8; font-size:14px;">동의 정보가 없습니다.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 추천 이력 -->
+    <div id="sec-recommend" class="detail-section">
+        <div class="card">
+            <div class="card-title">추천 이력</div>
+            {% if recommend_history %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>상품명</th>
+                            <th>상태</th>
+                            <th>추천일시</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in recommend_history %}
+                        <tr>
+                            <td>{{ r.product_name }}</td>
+                            <td>
+                                {% if r.purchased_at %}
+                                <span class="badge badge-purchased">구매완료</span>
+                                {% elif r.clicked_at %}
+                                <span class="badge badge-clicked">클릭</span>
+                                {% else %}
+                                <span class="badge badge-recommended">추천됨</span>
+                                {% endif %}
+                            </td>
+                            <td class="mono">{{ r.recommended_at }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p style="color:#94a3b8; font-size:14px;">추천 이력이 없습니다.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 제휴사 매핑 -->
+    <div id="sec-identity" class="detail-section">
+        <div class="card">
+            <div class="card-title">제휴사 매핑</div>
+            {% if identities %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>제휴사</th>
+                            <th>제휴 고객 ID</th>
+                            <th>연결일</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for i in identities %}
+                        <tr>
+                            <td>{{ consent_labels.get(i.company_id, i.company_id) }}</td>
+                            <td class="mono">{{ i.affiliate_customer_id }}</td>
+                            <td class="mono">{{ i.linked_at }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p style="color:#94a3b8; font-size:14px;">연결된 제휴사가 없습니다.</p>
+            {% endif %}
+        </div>
+    </div>
+
 </div>
+
+<script>
+function showTab(el, id) {
+    document.querySelectorAll('.sidebar-sub-item').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.detail-section').forEach(s => s.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('sec-' + id).classList.add('active');
+}
+</script>
 {% endblock %}

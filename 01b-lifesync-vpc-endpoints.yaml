@@ -1,0 +1,156 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Supplemental LifeSync VPC endpoints for ECS+ECR without NAT (NAT off + app-private).
+  Deploy AFTER 01-network. S3 gateway on app-private route table; interface endpoints in app-private AZ subnets.
+
+Parameters:
+  ProjectName: { Type: String }
+  Environment: { Type: String }
+  LifeSyncVpcId:
+    Type: AWS::EC2::VPC::Id
+  LifeSyncVpcCidr:
+    Type: String
+    Description: CIDR matching LifeSyncVpc (ingress to interface endpoints on tcp/443).
+  LifeSyncAppPrivateSubnetAId:
+    Type: AWS::EC2::Subnet::Id
+  LifeSyncAppPrivateSubnetBId:
+    Type: AWS::EC2::Subnet::Id
+  LifeSyncAppPrivateRouteTableId:
+    Type: String
+    Description: Same as Output LifeSyncAppPrivateRouteTableId from 01-network.
+
+Resources:
+  LifeSyncVpceSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Interface VPC endpoints HTTPS from LifeSync VPC (ECS / ECR / logs / STS).
+      VpcId: !Ref LifeSyncVpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref LifeSyncVpcCidr
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-lifesync-vpc-endpoints-sg"
+
+  LifeSyncVpceS3Gateway:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: gateway
+      VpcId: !Ref LifeSyncVpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      RouteTableIds:
+        - !Ref LifeSyncAppPrivateRouteTableId
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-lifesync-vpc-endpoints-s3"
+
+  LifeSyncVpceEcrApi:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: interface
+      PrivateDnsEnabled: true
+      VpcId: !Ref LifeSyncVpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ecr.api"
+      SubnetIds: [!Ref LifeSyncAppPrivateSubnetAId, !Ref LifeSyncAppPrivateSubnetBId]
+      SecurityGroupIds: [!Ref LifeSyncVpceSg]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-lifesync-vpc-endpoints-ecr-api"
+
+  LifeSyncVpceEcrDkr:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: interface
+      PrivateDnsEnabled: true
+      VpcId: !Ref LifeSyncVpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ecr.dkr"
+      SubnetIds: [!Ref LifeSyncAppPrivateSubnetAId, !Ref LifeSyncAppPrivateSubnetBId]
+      SecurityGroupIds: [!Ref LifeSyncVpceSg]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-lifesync-vpc-endpoints-ecr-dkr"
+
+  LifeSyncVpceEcrPublic:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: interface
+      PrivateDnsEnabled: true
+      VpcId: !Ref LifeSyncVpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ecr.public"
+      SubnetIds: [!Ref LifeSyncAppPrivateSubnetAId, !Ref LifeSyncAppPrivateSubnetBId]
+      SecurityGroupIds: [!Ref LifeSyncVpceSg]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-lifesync-vpc-endpoints-ecr-public"
+
+  LifeSyncVpceEcs:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: interface
+      PrivateDnsEnabled: true
+      VpcId: !Ref LifeSyncVpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ecs"
+      SubnetIds: [!Ref LifeSyncAppPrivateSubnetAId, !Ref LifeSyncAppPrivateSubnetBId]
+      SecurityGroupIds: [!Ref LifeSyncVpceSg]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-lifesync-vpc-endpoints-ecs"
+
+  LifeSyncVpceEcsAgent:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: interface
+      PrivateDnsEnabled: true
+      VpcId: !Ref LifeSyncVpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ecs-agent"
+      SubnetIds: [!Ref LifeSyncAppPrivateSubnetAId, !Ref LifeSyncAppPrivateSubnetBId]
+      SecurityGroupIds: [!Ref LifeSyncVpceSg]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-lifesync-vpc-endpoints-ecs-agent"
+
+  LifeSyncVpceEcsTelemetry:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: interface
+      PrivateDnsEnabled: true
+      VpcId: !Ref LifeSyncVpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ecs-telemetry"
+      SubnetIds: [!Ref LifeSyncAppPrivateSubnetAId, !Ref LifeSyncAppPrivateSubnetBId]
+      SecurityGroupIds: [!Ref LifeSyncVpceSg]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-lifesync-vpc-endpoints-ecs-telemetry"
+
+  LifeSyncVpceLogs:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: interface
+      PrivateDnsEnabled: true
+      VpcId: !Ref LifeSyncVpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.logs"
+      SubnetIds: [!Ref LifeSyncAppPrivateSubnetAId, !Ref LifeSyncAppPrivateSubnetBId]
+      SecurityGroupIds: [!Ref LifeSyncVpceSg]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-lifesync-vpc-endpoints-logs"
+
+  LifeSyncVpceSts:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: interface
+      PrivateDnsEnabled: true
+      VpcId: !Ref LifeSyncVpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.sts"
+      SubnetIds: [!Ref LifeSyncAppPrivateSubnetAId, !Ref LifeSyncAppPrivateSubnetBId]
+      SecurityGroupIds: [!Ref LifeSyncVpceSg]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-lifesync-vpc-endpoints-sts"
+
+Outputs:
+  LifeSyncVpcEndpointsSgId:
+    Description: Attach to ECS host SG if strict rules block 443 to endpoint ENIs (usually not required when using VPC CIDR on this SG).
+    Value: !Ref LifeSyncVpceSg
