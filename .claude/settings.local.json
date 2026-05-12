@@ -57,7 +57,16 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
-      "Bash(zip -r ecs-ecr-iac-update.zip infra/compute/ecr.yaml infra/compute/alb.yaml infra/compute/ecs-platform.yaml infra/compute/ecs-admin.yaml infra/pipeline/codedeploy.yaml infra/pipeline/codepipeline.yaml lifesync360-platform/buildspec.yml admin-platform/buildspec.yml ecs-cicd-guide.md cloud-deploy-procedure.md)"
+      "Bash(zip -r ecs-ecr-iac-update.zip infra/compute/ecr.yaml infra/compute/alb.yaml infra/compute/ecs-platform.yaml infra/compute/ecs-admin.yaml infra/pipeline/codedeploy.yaml infra/pipeline/codepipeline.yaml lifesync360-platform/buildspec.yml admin-platform/buildspec.yml ecs-cicd-guide.md cloud-deploy-procedure.md)",
+      "Bash(git commit *)",
+      "Bash(git rm *)",
+      "Bash(git reset *)",
+      "Bash(git pull *)",
+      "Bash(git stash *)",
+      "Bash(del \"C:\\\\Users\\\\campus3S026\\\\LS\\\\admin-platform\\\\test_render.py\")",
+      "Bash(xargs grep *)",
+      "PowerShell(Compress-Archive *)",
+      "Bash(grep -E \"\\\\.md$\")"
     ]
   }
 }
