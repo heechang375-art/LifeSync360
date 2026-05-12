@@ -22,6 +22,61 @@ phases:
       - docker push $ECR_URI:$IMAGE_TAG
       - docker push $ECR_URI:latest
       - printf '[{"name":"%s","imageUri":"%s:%s"}]' $CONTAINER_NAME $ECR_URI $IMAGE_TAG > imagedefinitions.json
+      - |
+        aws application-autoscaling register-scalable-target \
+          --service-namespace ecs \
+          --resource-id service/lifesync-cluster/lifesync-platform-service \
+          --scalable-dimension ecs:service:DesiredCount \
+          --min-capacity 1 --max-capacity 4 \
+          --region $AWS_DEFAULT_REGION
+      - |
+        aws application-autoscaling put-scaling-policy \
+          --service-namespace ecs \
+          --resource-id service/lifesync-cluster/lifesync-platform-service \
+          --scalable-dimension ecs:service:DesiredCount \
+          --policy-name lifesync-platform-scale-out \
+          --policy-type StepScaling \
+          --step-scaling-policy-configuration '{"AdjustmentType":"ChangeInCapacity","Cooldown":60,"StepAdjustments":[{"MetricIntervalLowerBound":0,"ScalingAdjustment":1}]}' \
+          --region $AWS_DEFAULT_REGION
+      - |
+        aws application-autoscaling put-scaling-policy \
+          --service-namespace ecs \
+          --resource-id service/lifesync-cluster/lifesync-platform-service \
+          --scalable-dimension ecs:service:DesiredCount \
+          --policy-name lifesync-platform-scale-in \
+          --policy-type StepScaling \
+          --step-scaling-policy-configuration '{"AdjustmentType":"ChangeInCapacity","Cooldown":300,"StepAdjustments":[{"MetricIntervalUpperBound":0,"ScalingAdjustment":-1}]}' \
+          --region $AWS_DEFAULT_REGION
+      - |
+        SCALE_OUT_ARN=$(aws application-autoscaling describe-scaling-policies \
+          --service-namespace ecs \
+          --resource-id service/lifesync-cluster/lifesync-platform-service \
+          --query 'ScalingPolicies[?PolicyName==`lifesync-platform-scale-out`].PolicyARN' \
+          --output text --region $AWS_DEFAULT_REGION)
+        aws cloudwatch put-metric-alarm \
+          --alarm-name lifesync-platform-cpu-high \
+          --metric-name CPUUtilization \
+          --namespace AWS/ECS \
+          --dimensions Name=ClusterName,Value=lifesync-cluster Name=ServiceName,Value=lifesync-platform-service \
+          --statistic Average --period 60 --evaluation-periods 2 \
+          --threshold 70 --comparison-operator GreaterThanThreshold \
+          --alarm-actions $SCALE_OUT_ARN \
+          --region $AWS_DEFAULT_REGION
+      - |
+        SCALE_IN_ARN=$(aws application-autoscaling describe-scaling-policies \
+          --service-namespace ecs \
+          --resource-id service/lifesync-cluster/lifesync-platform-service \
+          --query 'ScalingPolicies[?PolicyName==`lifesync-platform-scale-in`].PolicyARN' \
+          --output text --region $AWS_DEFAULT_REGION)
+        aws cloudwatch put-metric-alarm \
+          --alarm-name lifesync-platform-cpu-low \
+          --metric-name CPUUtilization \
+          --namespace AWS/ECS \
+          --dimensions Name=ClusterName,Value=lifesync-cluster Name=ServiceName,Value=lifesync-platform-service \
+          --statistic Average --period 60 --evaluation-periods 10 \
+          --threshold 30 --comparison-operator LessThanThreshold \
+          --alarm-actions $SCALE_IN_ARN \
+          --region $AWS_DEFAULT_REGION
 
 artifacts:
   files:
