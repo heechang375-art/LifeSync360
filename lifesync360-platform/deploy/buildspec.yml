@@ -21,7 +21,6 @@ phases:
     commands:
       - docker push $ECR_URI:$IMAGE_TAG
       - docker push $ECR_URI:latest
-      - aws ecs update-service --cluster lifesync-cluster --service lifesync-platform-service --desired-count 1 --region $AWS_DEFAULT_REGION
       - printf '{"ImageURI":"%s:%s"}' $ECR_URI $IMAGE_TAG > imageDetail.json
 
 artifacts:
