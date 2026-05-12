@@ -53,13 +53,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Debug credential length
-        run: |
-          echo "Key ID length: ${#AWS_ACCESS_KEY_ID}"
-          echo "Secret length: ${#AWS_SECRET_ACCESS_KEY}"
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -71,7 +64,7 @@ jobs:
         run: |
           git config --global credential.helper '!aws codecommit credential-helper $@'
           git config --global credential.UseHttpPath true
-          git remote add codecommit https://git-codecommit.${{ env.AWS_REGION }}.amazonaws.com/v1/repos/lifesync360-platform
+          git remote add codecommit https://git-codecommit.${{ env.AWS_REGION }}.amazonaws.com/v1/repos/lifesync-lifesync360-service
           git subtree split --prefix=lifesync360-platform -b _platform-deploy
           git push codecommit _platform-deploy:main --force
           git branch -D _platform-deploy
