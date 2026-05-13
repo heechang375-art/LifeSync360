@@ -4,7 +4,7 @@ GCP Vertex AI 분석 결과 수신 Lambda
 
 역할:
   1. DynamoDB PUT  — 실시간 스코어 저장 (대시보드용)
-  2. Aurora UPDATE — 등급 변경 시 users.grade 반영
+  2. Aurora SELECT — 등급 기반 추천 product_id 조회 (recommend_rule → category_master → product_master)
   3. Redis SET     — 고객별 추천 product_id 목록 캐싱 (TTL 24h)
                      상품 상세 데이터는 Aurora가 source of truth
 """
@@ -30,14 +30,12 @@ AWS_REGION   = os.environ.get('AWS_REGION', 'ap-northeast-2')
 REQUIRED_FIELDS = {'global_id', 'dynamic_score', 'dynamic_grade', 'health_score', 'next_best_action'}
 
 GRADE_MAP = {
-    'VIP':    'PLATINUM',
+    'VIP':    'VIP',
     'GOLD':   'GOLD',
     'SILVER': 'SILVER',
-    'BRONZE': 'BRONZE',
     'BASIC':  'BASIC',
+    'CARE':   'CARE',
 }
-
-GRADE_LEVELS = ['BASIC', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM']
 
 _dynamodb = None
 _redis    = None
@@ -68,21 +66,17 @@ def _get_db():
     )
 
 
-def _fetch_recommended_ids(cur, aurora_grade):
-    """등급 + 추천룰 기준으로 추천 product_id 목록만 조회"""
-    idx = GRADE_LEVELS.index(aurora_grade)
-    accessible = GRADE_LEVELS[:idx + 1]
-    placeholders = ', '.join(['%s'] * len(accessible))
-    cur.execute(f"""
+def _fetch_recommended_ids(cur, grade):
+    """등급 기준 추천룰 → 카테고리 → 상품 경로로 product_id 목록 조회"""
+    cur.execute("""
         SELECT pm.product_id
-        FROM product_master pm
-        LEFT JOIN recommend_rule rr
-            ON pm.product_id = rr.product_id AND rr.condition_key = 'ai_condition'
-        WHERE pm.is_active = 1
-          AND pm.min_grade IN ({placeholders})
-        ORDER BY rr.priority DESC, pm.product_id
+        FROM recommend_rule rr
+        JOIN category_master cm ON cm.category_code = rr.category_code AND cm.active_flag = 'Y'
+        JOIN product_master pm  ON pm.category_id   = cm.category_id   AND pm.active_flag = 'Y'
+        WHERE rr.target_grade = %s
+        ORDER BY pm.priority_rank
         LIMIT 50
-    """, accessible)
+    """, (grade,))
     return [row['product_id'] for row in cur.fetchall()]
 
 
@@ -109,8 +103,8 @@ def handler(event, context):
     if dynamic_grade not in GRADE_MAP:
         return _resp(400, {'error': f'알 수 없는 dynamic_grade: {dynamic_grade}', 'allowed': list(GRADE_MAP)})
 
-    global_id    = body['global_id']
-    aurora_grade = GRADE_MAP[dynamic_grade]
+    global_id = body['global_id']
+    grade     = GRADE_MAP[dynamic_grade]
 
     # 2. DynamoDB PUT — 스코어 저장
     _get_dynamo_table().put_item(Item={
@@ -129,16 +123,11 @@ def handler(event, context):
         'ttl':              int(time.time()) + 86400 * TTL_DAYS,
     })
 
-    # 3. Aurora: grade 업데이트 + 추천 product_id 조회
+    # 3. Aurora: 등급 기반 추천 product_id 조회
     db = _get_db()
     try:
         with db.cursor() as cur:
-            cur.execute(
-                'UPDATE users SET grade = %s WHERE global_id = %s AND grade != %s',
-                (aurora_grade, global_id, aurora_grade),
-            )
-            db.commit()
-            product_ids = _fetch_recommended_ids(cur, aurora_grade)
+            product_ids = _fetch_recommended_ids(cur, grade)
     finally:
         db.close()
 

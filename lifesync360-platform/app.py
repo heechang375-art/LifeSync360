@@ -11,8 +11,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 JWT_SECRET          = os.environ['JWT_SECRET']
-USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() == 'true'
-PROFILE_SYNC_LAMBDA = os.environ.get('PROFILE_SYNC_LAMBDA', 'customer-profile-sync')
+# USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() == 'true'
+USE_MOCK            = os.environ.get('USE_MOCK', 'false').lower() == 'false'  # 실제 배포에서는 MOCK 사용 안함
+PROFILE_SYNC_LAMBDA = os.environ.get('PROFILE_SYNC_LAMBDA', '')
 AWS_REGION          = os.environ.get('AWS_REGION', 'ap-northeast-2')
 
 if USE_MOCK:
@@ -22,30 +23,36 @@ if USE_MOCK:
         get_mock_upgrade_actions, MOCK_MY_PRODUCTS, MOCK_CONSENTED_KEYS,
     )
 
-# 로컬/클라우드 공통 정적 설정
 COMPANIES = [
-    {'key': 'bank',       'name': 'LS 은행'},
-    {'key': 'card',       'name': 'LS 카드'},
-    {'key': 'insurance',  'name': 'LS 보험'},
-    {'key': 'internet_insurance',   'name': 'LS 온라인보험'},
-    {'key': 'securities', 'name': 'LS 증권'},
-    {'key': 'healthcare', 'name': 'LS 헬스케어'},
-    {'key': 'hospital',   'name': 'LS 병원'},
+    {'key': 'BANK',       'name': 'LS 은행'},
+    {'key': 'CARD',       'name': 'LS 카드'},
+    {'key': 'INSURANCE',  'name': 'LS 보험'},
+    {'key': 'SECURITIES', 'name': 'LS 증권'},
+    {'key': 'HEALTHCARE', 'name': 'LS 헬스케어'},
+    {'key': 'HOSPITAL',   'name': 'LS 병원'},
 ]
 
 CONSENTS = [
-    {'key': 'bank',       'label': '은행 데이터 활용 동의'},
-    {'key': 'card',       'label': '카드 데이터 활용 동의'},
-    {'key': 'insurance',  'label': '보험 데이터 활용 동의'},
-    {'key': 'internet_insurance',   'label': '온라인 보험 데이터 활용 동의'},
-    {'key': 'securities', 'label': '증권 데이터 활용 동의'},
-    {'key': 'healthcare', 'label': '헬스케어 데이터 활용 동의'},
-    {'key': 'hospital',   'label': '병원 데이터 활용 동의'},
-    {'key': 'wearable',   'label': '웨어러블 동의'},
+    {'key': 'BANK',       'label': '은행 데이터 활용 동의'},
+    {'key': 'CARD',       'label': '카드 데이터 활용 동의'},
+    {'key': 'INSURANCE',  'label': '보험 데이터 활용 동의'},
+    {'key': 'SECURITIES', 'label': '증권 데이터 활용 동의'},
+    {'key': 'HEALTHCARE', 'label': '헬스케어 데이터 활용 동의'},
+    {'key': 'HOSPITAL',   'label': '병원 데이터 활용 동의'},
+    {'key': 'WEARABLE',   'label': '웨어러블 동의'},
 ]
 
+# Service-DB 등급 체계: VIP > GOLD > SILVER > BASIC, CARE는 건강 특화
+GRADE_SCORE_MAP = {
+    'VIP':    90,
+    'GOLD':   80,
+    'SILVER': 70,
+    'BASIC':  60,
+    'CARE':    0,
+}
+
 GRADE_BENEFITS = {
-    'PLATINUM': {'color': 'platinum', 'desc': '최상위 고객 전용 혜택', 'benefits': [
+    'VIP': {'color': 'platinum', 'desc': '최상위 고객 전용 혜택', 'benefits': [
         '보험료 최대 15% 할인', '포인트 3배 적립', 'PB 전담 매니저 배정',
         '공항 라운지 무제한', 'VIP 종합 건강검진 무료',
     ]},
@@ -57,11 +64,11 @@ GRADE_BENEFITS = {
         '보험료 5% 할인', '포인트 1.5배 적립', '건강검진 15% 할인',
         '금융상품 우대금리 0.1%p',
     ]},
-    'BRONZE': {'color': 'bronze', 'desc': '기본 우대 혜택', 'benefits': [
-        '보험료 3% 할인', '포인트 1.2배 적립', '건강검진 10% 할인',
-    ]},
     'BASIC': {'color': 'basic', 'desc': '기본 혜택', 'benefits': [
         '포인트 기본 적립', '제휴 서비스 이용',
+    ]},
+    'CARE': {'color': 'care', 'desc': '건강관리 특화 혜택', 'benefits': [
+        'AI 건강 리포트 제공', '운동/식단 코칭', '건강검진 우선 예약',
     ]},
 }
 
@@ -82,16 +89,28 @@ def get_redis():
 def get_dynamo_table():
     global _dynamo
     if _dynamo is None:
-        _dynamo = boto3.resource('dynamodb', region_name=os.environ.get('AWS_REGION', 'ap-northeast-2'))
-    return _dynamo.Table(os.environ.get('DYNAMO_TABLE', 'lifesync-scores'))
+        _dynamo = boto3.resource('dynamodb', region_name=AWS_REGION)
+    return _dynamo.Table(os.environ['DYNAMO_TABLE'])
 
 def get_db():
+    """Service-DB (lifesync360) 연결"""
     import pymysql
     return pymysql.connect(
         host=os.environ['AURORA_HOST'],
         user=os.environ['DB_USER'],
         password=os.environ['DB_PASS'],
-        database=os.environ.get('DB_NAME', 'lifesync'),
+        database=os.environ['DB_NAME'],
+        cursorclass=pymysql.cursors.DictCursor,
+    )
+
+def get_auth_db():
+    """인증 DB (users / consent) 연결 — 온프레미스 또는 별도 Aurora DB"""
+    import pymysql
+    return pymysql.connect(
+        host=os.environ['AUTH_DB_HOST'],
+        user=os.environ['AUTH_DB_USER'],
+        password=os.environ['AUTH_DB_PASS'],
+        database=os.environ['AUTH_DB_NAME'],
         cursorclass=pymysql.cursors.DictCursor,
     )
 
@@ -106,7 +125,8 @@ def _get_lambda():
     return _lambda_client
 
 def _resolve_global_id(ls_user_id, email):
-    """global_id 미설정 유저의 계열사 ID 매핑 조회 (Lambda invoke)"""
+    if not PROFILE_SYNC_LAMBDA:
+        return None
     try:
         resp = _get_lambda().invoke(
             FunctionName=PROFILE_SYNC_LAMBDA,
@@ -115,7 +135,7 @@ def _resolve_global_id(ls_user_id, email):
         )
         result = _json.loads(resp['Payload'].read())
         if result.get('statusCode') == 200:
-            return _json.loads(result['body'])['global_id']
+            return _json.loads(result['body'])['global_customer_id']
     except Exception:
         pass
     return None
@@ -143,16 +163,30 @@ def api_register():
         token = make_jwt(user['ls_user_id'], user['global_id'])
         return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
 
-    db = get_db()
+    name     = (data.get('name') or '').strip()
+    email    = (data.get('email') or '').strip()
+    password = data.get('password') or ''
+    if not name or not email or not password:
+        return jsonify({'error': '이름, 이메일, 비밀번호는 필수 입력 항목입니다.'}), 400
+    if len(password) < 8:
+        return jsonify({'error': '비밀번호는 8자 이상이어야 합니다.'}), 400
+
+    db = get_auth_db()
     try:
         with db.cursor() as cur:
             ls_user_id = f"LS-{datetime.datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+            global_id  = f"G-{uuid.uuid4().hex[:12].upper()}"
+
             cur.execute(
-                'INSERT INTO users (ls_user_id, email, name, password_hash) VALUES (%s, %s, %s, %s)',
-                (ls_user_id, data['email'], data['name'], generate_password_hash(data['password']))
+                'INSERT INTO master_customer (global_customer_id) VALUES (%s)',
+                (global_id,)
+            )
+            cur.execute(
+                'INSERT INTO users (ls_user_id, global_customer_id, login_email, password_hash) VALUES (%s, %s, %s, %s)',
+                (ls_user_id, global_id, data['email'], generate_password_hash(data['password']))
             )
             db.commit()
-        token = make_jwt(ls_user_id, ls_user_id)
+        token = make_jwt(ls_user_id, global_id)
         return jsonify({'token': token, 'ls_user_id': ls_user_id})
     finally:
         db.close()
@@ -160,7 +194,7 @@ def api_register():
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
-    data = request.get_json()
+    data     = request.get_json()
     email    = data.get('email', '')
     password = data.get('password', '')
 
@@ -171,21 +205,19 @@ def api_login():
         token = make_jwt(user['ls_user_id'], user['global_id'])
         return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
 
-    db = get_db()
+    db = get_auth_db()
     try:
         with db.cursor() as cur:
-            cur.execute('SELECT * FROM users WHERE email = %s', (email,))
+            cur.execute('SELECT * FROM users WHERE login_email = %s', (email,))
             user = cur.fetchone()
     finally:
         db.close()
+
     if not user or not check_password_hash(user['password_hash'], password):
         return jsonify({'error': '이메일 또는 비밀번호가 올바르지 않습니다.'}), 401
 
-    global_id = user.get('global_id')
-    if not global_id:
-        global_id = _resolve_global_id(user['ls_user_id'], email)
-
-    token = make_jwt(user['ls_user_id'], global_id or user['ls_user_id'])
+    global_customer_id = user.get('global_customer_id') or _resolve_global_id(user['ls_user_id'], email)
+    token = make_jwt(user['ls_user_id'], global_customer_id or user['ls_user_id'])
     return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
 
 
@@ -208,24 +240,25 @@ def api_me():
                 'email':      user['email'],
             })
 
-        db = get_db()
+        db = get_auth_db()
         try:
             with db.cursor() as cur:
                 cur.execute(
-                    'SELECT name, email, grade, global_id FROM users WHERE ls_user_id = %s',
+                    'SELECT login_email, global_customer_id FROM users WHERE ls_user_id = %s',
                     (payload['sub'],)
                 )
                 user = cur.fetchone()
         finally:
             db.close()
+
         if not user:
             return jsonify({'error': 'user not found'}), 404
         return jsonify({
             'ls_user_id': payload['sub'],
-            'global_id':  user.get('global_id', payload['gid']),
-            'name':       user['name'],
-            'grade':      user['grade'],
-            'email':      user['email'],
+            'global_id':  user.get('global_customer_id', payload['gid']),
+            'name':       None,
+            'grade':      None,
+            'email':      user['login_email'],
         })
 
     except jwt.ExpiredSignatureError:
@@ -248,14 +281,14 @@ def api_consent():
 
     consents = request.get_json().get('consents', [])
     all_keys = [c['key'] for c in CONSENTS]
-    db = get_db()
+    db = get_auth_db()
     try:
         with db.cursor() as cur:
             for key in all_keys:
                 cur.execute(
-                    '''INSERT INTO consent (global_id, consent_key, consent_yn)
+                    '''INSERT INTO consent (global_customer_id, domain, consent_flag)
                        VALUES (%s, %s, %s)
-                       ON DUPLICATE KEY UPDATE consent_yn = VALUES(consent_yn)''',
+                       ON DUPLICATE KEY UPDATE consent_flag = VALUES(consent_flag)''',
                     (payload['gid'], key, 'Y' if key in consents else 'N')
                 )
             db.commit()
@@ -278,27 +311,23 @@ def api_event():
 
     data         = request.get_json() or {}
     event_type   = data.get('event_type', '')
-    event_target = data.get('event_target', '')
+    product_id   = data.get('product_id')      # Service-DB BIGINT product_id
     global_id    = payload['gid']
 
     db = get_db()
     try:
         with db.cursor() as cur:
-            cur.execute(
-                'INSERT INTO customer_event_log (global_id, event_type, event_target) VALUES (%s, %s, %s)',
-                (global_id, event_type, event_target)
-            )
-            if event_type == 'recommendation_click':
+            if event_type == 'recommendation_click' and product_id:
                 cur.execute(
-                    'UPDATE customer_recommend_history SET clicked_at = NOW() '
-                    'WHERE global_id = %s AND product_name = %s AND clicked_at IS NULL LIMIT 1',
-                    (global_id, event_target)
+                    'UPDATE customer_recommend_history SET clicked_flag = %s '
+                    'WHERE global_id = %s AND product_id = %s AND clicked_flag = %s LIMIT 1',
+                    ('Y', global_id, product_id, 'N')
                 )
-            elif event_type == 'purchased':
+            elif event_type == 'purchased' and product_id:
                 cur.execute(
-                    'UPDATE customer_recommend_history SET purchased_at = NOW() '
-                    'WHERE global_id = %s AND product_name = %s AND purchased_at IS NULL LIMIT 1',
-                    (global_id, event_target)
+                    'UPDATE customer_recommend_history SET purchased_flag = %s '
+                    'WHERE global_id = %s AND product_id = %s AND purchased_flag = %s LIMIT 1',
+                    ('Y', global_id, product_id, 'N')
                 )
         db.commit()
     finally:
@@ -320,49 +349,63 @@ def api_recommendations():
 
     global_id = payload['gid']
 
-    # ① Redis 캐시 조회
+    # ① DynamoDB에서 동적 등급/점수 조회
+    grade         = 'BASIC'
+    dynamic_score = None
+    try:
+        item = get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item', {})
+        grade         = item.get('dynamic_grade', 'BASIC')
+        dynamic_score = float(item['dynamic_score']) if item.get('dynamic_score') else None
+    except Exception:
+        pass
+
+    # ② Redis 캐시 조회
     product_ids = None
     try:
         cached = get_redis().get(f'rec:{global_id}')
         if cached:
             product_ids = _json.loads(cached)
     except Exception:
-        pass  # Redis 장애 시 Aurora fallback
+        pass
 
     db = get_db()
     try:
         with db.cursor() as cur:
-            if product_ids is not None:
-                # ② 캐시 히트
+            if product_ids:
                 placeholders = ', '.join(['%s'] * len(product_ids))
                 cur.execute(f"""
-                    SELECT product_id, company_id, product_type,
-                           product_name, product_desc, product_tag
-                    FROM product_master
-                    WHERE product_id IN ({placeholders}) AND is_active = 1
+                    SELECT p.product_id, p.product_code, p.product_name, p.description,
+                           p.target_grade, p.risk_level, p.priority_rank,
+                           c.company_code, c.company_name, cat.category_code
+                    FROM product_master p
+                    JOIN company_master   c   ON p.company_id  = c.company_id
+                    JOIN category_master  cat ON p.category_id = cat.category_id
+                    WHERE p.product_id IN ({placeholders}) AND p.active_flag = 'Y'
+                    ORDER BY p.priority_rank
                 """, product_ids)
             else:
-                # ③ 캐시 미스 — 등급 기준 직접 조회
-                cur.execute('SELECT grade FROM users WHERE global_id = %s', (global_id,))
-                row   = cur.fetchone()
-                grade = row['grade'] if row else 'BASIC'
-                grade_levels = ['BASIC', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM']
-                idx   = grade_levels.index(grade) if grade in grade_levels else 0
-                accessible   = grade_levels[:idx + 1]
-                placeholders = ', '.join(['%s'] * len(accessible))
-                cur.execute(f"""
-                    SELECT pm.product_id, pm.company_id, pm.product_type,
-                           pm.product_name, pm.product_desc, pm.product_tag
-                    FROM product_master pm
-                    WHERE pm.is_active = 1 AND pm.min_grade IN ({placeholders})
-                    ORDER BY pm.product_id LIMIT 50
-                """, accessible)
+                min_score = GRADE_SCORE_MAP.get(grade, 60)
+                cur.execute("""
+                    SELECT p.product_id, p.product_code, p.product_name, p.description,
+                           p.target_grade, p.risk_level, p.priority_rank,
+                           c.company_code, c.company_name, cat.category_code
+                    FROM product_master p
+                    JOIN company_master   c   ON p.company_id  = c.company_id
+                    JOIN category_master  cat ON p.category_id = cat.category_id
+                    WHERE p.active_flag = 'Y'
+                      AND p.min_score <= %s
+                    ORDER BY p.priority_rank
+                    LIMIT 20
+                """, (min_score,))
+
             products = cur.fetchall()
             now = datetime.datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             for p in products:
                 cur.execute(
-                    'INSERT INTO customer_recommend_history (global_id, product_name, affiliate_id, recommended_at) VALUES (%s, %s, %s, %s)',
-                    (global_id, p['product_name'], p['company_id'], now)
+                    '''INSERT INTO customer_recommend_history
+                       (global_id, product_id, dynamic_score, dynamic_grade, action_code, recommended_at)
+                       VALUES (%s, %s, %s, %s, %s, %s)''',
+                    (global_id, p['product_id'], dynamic_score, grade, 'RECOMMEND_DASHBOARD', now)
                 )
         db.commit()
     finally:
@@ -383,17 +426,6 @@ def api_upgrade_actions():
     if USE_MOCK:
         return jsonify(get_mock_upgrade_actions(payload['sub']))
 
-    # TODO: 운영 전환 시 아래 블록 구현
-    # from upgrade_actions_engine import get_personalized_actions
-    # ctx = {
-    #     'health_score':      _get_dynamo_score(payload['gid']),
-    #     'wearable_linked':   _get_bq_wearable(payload['gid']),
-    #     'checkup_this_year': _get_bq_checkup(payload['gid']),
-    #     'insurance_months':  _get_aurora_insurance_months(payload['gid']),
-    #     'consent_count':     _get_aurora_consent_count(payload['gid']),
-    #     'avg_steps':         _get_bq_steps(payload['gid']),
-    # }
-    # return jsonify(get_personalized_actions(ctx))
     return jsonify([])
 
 
@@ -406,22 +438,44 @@ def api_my_products():
     except jwt.InvalidTokenError:
         return jsonify({'error': 'invalid token'}), 401
 
-    company_key = request.args.get('company', '')
-
     if USE_MOCK:
-        consented = MOCK_CONSENTED_KEYS.get(payload['sub'], set())
+        company_key = request.args.get('company', '')
+        consented   = MOCK_CONSENTED_KEYS.get(payload['sub'], set())
         if company_key and company_key not in consented:
             return jsonify({'error': 'consent_required'}), 403
         user_prods = MOCK_MY_PRODUCTS.get(payload['sub'], {})
         return jsonify(user_prods.get(company_key, []))
 
-    # TODO: 운영 전환 시 Aurora consent 테이블 확인 후 product_master + 계열사 API 조회
-    # with db.cursor() as cur:
-    #     cur.execute("SELECT consent_yn FROM consent WHERE global_id=%s AND consent_key=%s", (payload['gid'], company_key))
-    #     row = cur.fetchone()
-    #     if not row or row['consent_yn'] != 'Y':
-    #         return jsonify({'error': 'consent_required'}), 403
-    return jsonify([])
+    global_id   = payload['gid']
+    company_key = request.args.get('company', '')
+
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            query = """
+                SELECT p.product_code, p.product_name, p.description,
+                       p.target_grade, p.risk_level,
+                       c.company_code, c.company_name, cat.category_code,
+                       h.recommended_at
+                FROM customer_recommend_history h
+                JOIN product_master  p   ON h.product_id  = p.product_id
+                JOIN company_master  c   ON p.company_id  = c.company_id
+                JOIN category_master cat ON p.category_id = cat.category_id
+                WHERE h.global_id = %s
+                  AND h.purchased_flag = 'Y'
+                  AND p.active_flag = 'Y'
+            """
+            params = [global_id]
+            if company_key:
+                query += ' AND c.company_code = %s'
+                params.append(company_key)
+            query += ' ORDER BY h.recommended_at DESC'
+            cur.execute(query, params)
+            products = cur.fetchall()
+    finally:
+        db.close()
+
+    return jsonify(products)
 
 
 @app.route('/health')
@@ -482,10 +536,10 @@ def settings():
     )
 
 
-@app.route('/product/<product_id>')
-def product(product_id):
+@app.route('/product/<product_code>')
+def product(product_code):
     if USE_MOCK:
-        item = PRODUCTS_MAP.get(product_id)
+        item = PRODUCTS_MAP.get(product_code)
         if not item:
             return redirect(url_for('dashboard'))
         return render_template('product.html', item=item)
@@ -493,25 +547,35 @@ def product(product_id):
     db = get_db()
     try:
         with db.cursor() as cur:
-            cur.execute(
-                '''SELECT product_id, company_id, product_type, product_name,
-                          product_desc, product_tag
-                   FROM product_master WHERE product_id = %s AND is_active = 1''',
-                (product_id,)
-            )
+            cur.execute("""
+                SELECT p.product_id, p.product_code, p.product_name, p.description,
+                       p.target_grade, p.risk_level, p.min_score, p.max_score,
+                       c.company_code, c.company_name, cat.category_code, cat.category_name
+                FROM product_master p
+                JOIN company_master   c   ON p.company_id  = c.company_id
+                JOIN category_master  cat ON p.category_id = cat.category_id
+                WHERE p.product_code = %s AND p.active_flag = 'Y'
+            """, (product_code,))
             row = cur.fetchone()
+            if not row:
+                return redirect(url_for('dashboard'))
+
+            cur.execute(
+                'SELECT option_name, option_value FROM product_option WHERE product_id = %s ORDER BY option_id',
+                (row['product_id'],)
+            )
+            options = cur.fetchall()
     finally:
         db.close()
-    if not row:
-        return redirect(url_for('dashboard'))
+
     item = {
-        'id':       row['product_id'],
+        'id':       row['product_code'],
         'name':     row['product_name'],
-        'type':     row['product_type'],
-        'desc':     row['product_desc'],
-        'tag':      row.get('product_tag', ''),
-        'detail':   [],
-        'category': row.get('company_id', ''),
+        'type':     row['target_grade'],
+        'desc':     row['description'],
+        'tag':      row['risk_level'],
+        'detail':   [{'key': o['option_name'], 'value': o['option_value']} for o in options],
+        'category': row['company_code'],
     }
     return render_template('product.html', item=item)
 

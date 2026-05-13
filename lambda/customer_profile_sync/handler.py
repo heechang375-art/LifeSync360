@@ -3,10 +3,10 @@
 트리거: 플랫폼 로그인 시 Flask app에서 boto3 invoke (RequestResponse)
 
 역할:
-  1. On-Prem Private API /internal/identity 호출 → global_id 조회
-     (affiliate_customer_id = 플랫폼 가입 이메일, company_id = 기본 'bank')
-  2. Aurora users.global_id 업데이트 (변경 시에만)
-  3. global_id 반환
+  1. On-Prem Private API /internal/identity 호출 → global_customer_id 조회
+     (source_customer_id = 플랫폼 가입 이메일, domain = 기본 'BANK')
+  2. On-Prem users.global_customer_id 업데이트 (변경 시에만)
+  3. global_customer_id 반환
 """
 import json
 import os
@@ -17,16 +17,16 @@ import urllib.request
 import pymysql
 
 PRIVATE_API_URL = os.environ['PRIVATE_API_URL']
-AURORA_HOST     = os.environ['AURORA_HOST']
+AUTH_DB_HOST    = os.environ['AUTH_DB_HOST']
 DB_USER         = os.environ['DB_USER']
 DB_PASS         = os.environ['DB_PASS']
-DB_NAME         = os.environ.get('DB_NAME', 'lifesync')
-DEFAULT_COMPANY = os.environ.get('DEFAULT_COMPANY_ID', 'bank')
+DB_NAME         = os.environ.get('DB_NAME', 'lifesync_onprem')
+DEFAULT_DOMAIN  = os.environ.get('DEFAULT_DOMAIN', 'BANK')
 
 
 def _get_db():
     return pymysql.connect(
-        host=AURORA_HOST,
+        host=AUTH_DB_HOST,
         user=DB_USER,
         password=DB_PASS,
         database=DB_NAME,
@@ -35,11 +35,11 @@ def _get_db():
     )
 
 
-def _fetch_global_id(email, company_id):
+def _fetch_global_customer_id(email, domain):
     encoded = urllib.parse.quote(email, safe='')
-    url = f'{PRIVATE_API_URL}/internal/identity/{encoded}?company_id={company_id}'
+    url = f'{PRIVATE_API_URL}/internal/identity/{encoded}?domain={domain}'
     with urllib.request.urlopen(url, timeout=5) as resp:
-        return json.loads(resp.read())['global_id']
+        return json.loads(resp.read())['global_customer_id']
 
 
 def _resp(status, body):
@@ -55,31 +55,31 @@ def handler(event, context):
 
     ls_user_id = body.get('ls_user_id')
     email      = body.get('email')
-    company_id = body.get('company_id', DEFAULT_COMPANY)
+    domain     = body.get('domain', DEFAULT_DOMAIN)
 
     if not ls_user_id or not email:
         return _resp(400, {'error': '필수 필드 누락: ls_user_id, email'})
 
-    # 1. On-Prem Private API에서 global_id 조회
+    # 1. On-Prem Private API에서 global_customer_id 조회
     try:
-        global_id = _fetch_global_id(email, company_id)
+        global_customer_id = _fetch_global_customer_id(email, domain)
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            return _resp(404, {'error': f'계열사 ID 매핑 없음: email={email}, company_id={company_id}'})
+            return _resp(404, {'error': f'계열사 ID 매핑 없음: email={email}, domain={domain}'})
         return _resp(502, {'error': f'Private API 오류: HTTP {e.code}'})
     except Exception as e:
         return _resp(502, {'error': f'Private API 연결 실패: {str(e)}'})
 
-    # 2. Aurora users.global_id 업데이트 (이미 같은 값이면 스킵)
+    # 2. On-Prem users.global_customer_id 업데이트 (이미 같은 값이면 스킵)
     db = _get_db()
     try:
         with db.cursor() as cur:
             cur.execute(
-                'UPDATE users SET global_id = %s WHERE ls_user_id = %s AND (global_id IS NULL OR global_id != %s)',
-                (global_id, ls_user_id, global_id),
+                'UPDATE users SET global_customer_id = %s WHERE ls_user_id = %s AND (global_customer_id IS NULL OR global_customer_id != %s)',
+                (global_customer_id, ls_user_id, global_customer_id),
             )
             db.commit()
     finally:
         db.close()
 
-    return _resp(200, {'global_id': global_id, 'ls_user_id': ls_user_id})
+    return _resp(200, {'global_customer_id': global_customer_id, 'ls_user_id': ls_user_id})

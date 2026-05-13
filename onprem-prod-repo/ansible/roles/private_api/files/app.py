@@ -43,29 +43,27 @@ def health():
     return {'status': 'ok'}
 
 
-@app.get('/internal/customer/{global_id}')
-def get_customer(global_id: str):
+@app.get('/internal/customer/{global_customer_id}')
+def get_customer(global_customer_id: str):
     db = get_db()
     try:
         with db.cursor() as cur:
             cur.execute(
-                'SELECT * FROM master_customer WHERE global_id = %s', (global_id,)
+                'SELECT * FROM master_customer WHERE global_customer_id = %s', (global_customer_id,)
             )
             customer = cur.fetchone()
             if not customer:
                 raise HTTPException(status_code=404, detail='Customer not found')
-            customer['representative_name'] = decrypt_pii(customer['representative_name'])
-            customer['birth_dt'] = decrypt_pii(customer['birth_dt'])
 
             cur.execute(
-                'SELECT company_id, affiliate_customer_id, linked_at FROM customer_identity_map WHERE global_id = %s',
-                (global_id,)
+                'SELECT domain, source_customer_id, created_dt FROM customer_identity_map WHERE global_customer_id = %s',
+                (global_customer_id,)
             )
             customer['identities'] = cur.fetchall()
 
             cur.execute(
-                'SELECT grade, lifesync_score, updated_at FROM customer_360_profile WHERE global_id = %s',
-                (global_id,)
+                'SELECT lifesync_score, health_score, finance_score, asset_score, last_calc_dt FROM customer_360_profile WHERE global_customer_id = %s',
+                (global_customer_id,)
             )
             customer['profile'] = cur.fetchone()
     finally:
@@ -73,29 +71,29 @@ def get_customer(global_id: str):
     return customer
 
 
-@app.get('/internal/consent/{global_id}')
-def get_consent(global_id: str):
+@app.get('/internal/consent/{global_customer_id}')
+def get_consent(global_customer_id: str):
     db = get_db()
     try:
         with db.cursor() as cur:
             cur.execute(
-                'SELECT consent_key, consent_yn, updated_at FROM consent WHERE global_id = %s',
-                (global_id,)
+                'SELECT domain, consent_flag, consent_version, revoke_dt, created_dt FROM consent WHERE global_customer_id = %s',
+                (global_customer_id,)
             )
             rows = cur.fetchall()
     finally:
         db.close()
-    return {'global_id': global_id, 'consents': rows}
+    return {'global_customer_id': global_customer_id, 'consents': rows}
 
 
-@app.get('/internal/identity/{affiliate_customer_id}')
-def get_identity(affiliate_customer_id: str, company_id: str):
+@app.get('/internal/identity/{source_customer_id}')
+def get_identity(source_customer_id: str, domain: str):
     db = get_db()
     try:
         with db.cursor() as cur:
             cur.execute(
-                'SELECT global_id FROM customer_identity_map WHERE affiliate_customer_id = %s AND company_id = %s',
-                (affiliate_customer_id, company_id)
+                'SELECT global_customer_id FROM customer_identity_map WHERE source_customer_id = %s AND domain = %s',
+                (source_customer_id, domain)
             )
             row = cur.fetchone()
     finally:
@@ -114,9 +112,9 @@ async def trigger_deploy(request: Request):
 
 
 class MatchRequest(BaseModel):
-    company_id: str
-    affiliate_customer_id: str
-    global_id: str
+    domain: str
+    source_customer_id: str
+    global_customer_id: str
 
 
 @app.post('/internal/match')
@@ -125,17 +123,23 @@ def match_identity(req: MatchRequest):
     try:
         with db.cursor() as cur:
             cur.execute(
-                '''INSERT INTO customer_identity_map (global_id, company_id, affiliate_customer_id)
+                '''INSERT INTO customer_identity_map (global_customer_id, domain, source_customer_id)
                    VALUES (%s, %s, %s)
-                   ON DUPLICATE KEY UPDATE affiliate_customer_id = VALUES(affiliate_customer_id)''',
-                (req.global_id, req.company_id, req.affiliate_customer_id)
+                   ON DUPLICATE KEY UPDATE source_customer_id = VALUES(source_customer_id)''',
+                (req.global_customer_id, req.domain, req.source_customer_id)
             )
             cur.execute(
-                '''INSERT INTO matching_audit_log (global_id, action_type, action_detail)
-                   VALUES (%s, 'MATCH', %s)''',
-                (req.global_id, json.dumps({'company_id': req.company_id, 'affiliate_customer_id': req.affiliate_customer_id}))
+                '''INSERT INTO matching_audit_log (request_id, ls_user_id, match_rule, result, matched_global_customer_id)
+                   VALUES (%s, %s, %s, %s, %s)''',
+                (
+                    str(__import__('uuid').uuid4()),
+                    req.source_customer_id,
+                    req.domain,
+                    'MATCH',
+                    req.global_customer_id,
+                )
             )
             db.commit()
     finally:
         db.close()
-    return {'status': 'ok', 'global_id': req.global_id}
+    return {'status': 'ok', 'global_customer_id': req.global_customer_id}

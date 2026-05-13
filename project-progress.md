@@ -15,6 +15,17 @@
 | PII 암호화 (representative_name, birth_dt) | ✅ |
 | Ansible Vault encrypt 실행 | ✅ |
 | private_api DB 접속 환경변수 방식 전환 | ✅ |
+| schema.sql 아키텍처 ERD 기준 전면 재작성 | ✅ |
+| 실서버 스키마 마이그레이션 (컬럼 RENAME/DROP 적용) | ⏳ |
+
+### Lambda
+
+| 항목 | 상태 |
+|------|------|
+| gcp_result_ingest — GRADE_MAP / SQL / DB 연결 수정 | ✅ |
+| customer_profile_sync — on-prem 연결 전환 / 컬럼명 수정 | ✅ |
+| consent_filter — 신규 작성 (동의 고객 S3 추출) | ✅ |
+| consent_filter — IaC 배포 (Lambda / SG / IAM / EventBridge) | ⏳ IaC 담당 |
 
 ### 플랫폼 / 어드민
 
@@ -22,10 +33,13 @@
 |------|------|
 | lifesync360-platform — Mock 전체 기능 | ✅ |
 | lifesync360-platform — Aurora/DynamoDB/Redis 연동 코드 | ✅ (클라우드 배포 전) |
+| lifesync360-platform — 아키텍처 기준 컬럼명 전면 통일 | ✅ |
+| private_api — 아키텍처 기준 컬럼명/파라미터명 전면 통일 | ✅ |
 | admin-platform — Mock 전체 기능 | ✅ |
 | admin-platform — Aurora/DynamoDB 연동 코드 | ✅ (클라우드 배포 전) |
 | GitHub → CodeCommit 미러 CI | ✅ |
 | taskdef.json / buildspec.yml / appspec.yaml (platform + admin) | ✅ |
+| /api/me name/grade 연동 (PII 복호화 + DynamoDB grade) | ⏳ |
 | settings 포인트 Aurora 연동 | ⏳ |
 | /api/my-products 운영 연결 | ⏳ |
 | upgrade_actions 운영 연결 | ⏳ |
@@ -794,6 +808,117 @@ ansible all -m ping \
 - onprem-prod-repo README 최신화
 - MySQL root 비밀번호 재설정 (skip-grant-tables 복구)
 - Site-to-Site VPN BGP → Static 라우팅 전환 (→ aws-vpn-setup.md 문제3 참고)
+
+### 2026-05-13 (2차)
+
+- **consent_filter Lambda 신규 작성** (`lambda/consent_filter/`)
+  - 역할: Glue/EMR 실행 전 온프레미스 MySQL `consent` 테이블 조회 → 동의 고객 gzip CSV를 S3에 저장
+  - `handler.py`, `requirements.txt`(pymysql==1.1.1), `build.sh` 작성
+  - 도메인별 동의 피벗 SQL (`MAX(CASE WHEN domain = ... AND consent_flag = 'Y')`)
+  - `SSDictCursor` 서버사이드 커서로 스트리밍 처리 — 100만 건 이상도 Lambda 메모리 초과 없음
+  - Glue Job 트리거(`--consent_s3_path`, `--job_date` 인자 전달) + EMR Step 추가 선택 지원
+  - 출력 S3 경로: `s3://<OUTPUT_BUCKET>/consent-filter/<YYYYMMDD>/consented_customers.csv.gz`
+
+- **IaC/Glue 전달 문서 작성**
+  - `docs/iac-consent-filter-lambda.md`: Lambda 설정, 환경변수, VPC/SG, IAM, EventBridge Scheduler, 배포 절차, 체크리스트
+  - `docs/glue-emr-consent-spec.md`: 실행 흐름, S3 파일 스펙, 컬럼 구조, PySpark 코드 예시, EMR 연동, 장애 대응
+
+- **아키텍처 다이어그램(17페이지) ERD 검토 → 온프레미스 스키마/코드 불일치 발견**
+  - 실제 배포 schema.sql vs 아키텍처 다이어그램 차이 비교
+  - 주요 불일치: `consent_key`→`domain`, `consent_yn`→`consent_flag`, `global_id`→`global_customer_id`, 도메인 값(INS/ONINS/SEC/HLT→INSURANCE/SECURITIES/HEALTHCARE), HOSPITAL 추가, ONINS 제거
+  - `gcp_result_ingest`: GRADE_MAP PLATINUM/BRONZE 없는 등급 사용, recommend_rule SQL 컬럼 전체 오류, UPDATE users를 Aurora로 연결하는 버그
+
+- **온프레미스 schema.sql 전면 재작성** (`onprem-prod-repo/ansible/roles/mysql/files/schema.sql`)
+
+  | 테이블 | 변경 내용 |
+  |--------|-----------|
+  | `users` | `id`→`user_id`, `global_id`→`global_customer_id`, `email`→`login_email`, `name`/`grade` 제거, `mobile`/`user_status`/`consent_completed`/`last_login_dt` 추가 |
+  | `master_customer` | `global_id`→`global_customer_id`, `representative_name`/`birth_dt`/`gender`/`nationality` 제거, `customer_status`/`vip_grade`/`customer_type` 추가 |
+  | `consent` | `global_id`→`global_customer_id`, `consent_key`→`domain`, `consent_yn`→`consent_flag`, `consent_version`/`revoke_dt` 추가 |
+  | `customer_identity_map` | `global_id`→`global_customer_id`, `company_id`→`domain`, `affiliate_customer_id`→`source_customer_id`, `match_type`/`active_flag` 추가 |
+  | `customer_360_profile` | `global_id`→`global_customer_id`, `grade` 제거, `gender`/`age_band`/`region`/`income_grade`/`asset_grade`/`wearable_flag`/`health_score`/`finance_score`/`asset_score` 추가 |
+  | `customer_pii_secure` | `pii_type`/`encrypted_val` 구조 → `customer_name_enc`/`ssn_enc`/`mobile_enc`/`email_enc`/`address_enc` 필드별 암호화 컬럼으로 재설계 |
+  | `matching_audit_log` | `id`/`action_type`/`action_detail` → `audit_id`/`request_id`/`match_rule`/`result`/`match_score`/`consent_dt`/`request_dt` 등 전면 재설계 |
+  | `token_map` | `global_id`→`global_customer_id` |
+
+- **코드 전면 수정 (아키텍처 기준 컬럼명 통일)**
+
+  - **`consent_filter/handler.py`**
+    - `CONSENT_KEYS`: `INS/ONINS/SEC/HLT/wearable` → `SECURITIES/INSURANCE/HEALTHCARE/HOSPITAL/WEARABLE`
+    - SQL: `consent_key`→`domain`, `consent_yn`→`consent_flag`, `global_id`→`global_customer_id AS global_id` (Glue CSV 호환)
+
+  - **`lifesync360-platform/app.py`**
+    - `COMPANIES`/`CONSENTS`: 도메인 값 전체 변경, ONINS 제거, HOSPITAL 추가, wearable→WEARABLE
+    - consent INSERT: `consent_key`→`domain`, `consent_yn`→`consent_flag`, `global_id`→`global_customer_id`
+    - register: `master_customer`/`users` INSERT 컬럼명 통일 (`login_email`, `global_customer_id`, `name`/`grade` 제거)
+    - login: `WHERE email` → `WHERE login_email`, `global_id` → `global_customer_id`
+    - me: `SELECT` 컬럼명 통일, `name`/`grade`는 NULL 반환 (PII/DynamoDB에서 별도 조회 필요)
+
+  - **`private_api/app.py`**
+    - 전체 엔드포인트: `global_id`→`global_customer_id`, `consent_key`→`domain`, `consent_yn`→`consent_flag`
+    - `company_id`→`domain`, `affiliate_customer_id`→`source_customer_id`
+    - `MatchRequest` 모델 필드명 통일, matching_audit_log INSERT 컬럼명 통일
+
+  - **`gcp_result_ingest/handler.py`**
+    - `GRADE_MAP`: VIP→PLATINUM 제거, BRONZE 제거, CARE 추가 (VIP/GOLD/SILVER/BASIC/CARE 1:1 매핑)
+    - `GRADE_LEVELS` 전체 제거
+    - `_fetch_recommended_ids` SQL: `recommend_rule → category_master → product_master` JOIN 경로로 전면 수정 (`active_flag='Y'`, `target_grade=%s`, `priority_rank` 정렬)
+    - `UPDATE users SET grade` 단계 제거 (users에 grade 컬럼 없음, grade는 DynamoDB `dynamic_grade`로 관리)
+
+  - **`customer_profile_sync/handler.py`**
+    - DB 연결: `AURORA_HOST` → `AUTH_DB_HOST` (on-prem MySQL)
+    - `DB_NAME`: `lifesync` → `lifesync_onprem`
+    - 컬럼명: `global_id`→`global_customer_id`
+    - Private API 쿼리 파라미터: `company_id` → `domain`
+    - 기본값: `DEFAULT_COMPANY='bank'` → `DEFAULT_DOMAIN='BANK'`
+
+- **미완료 / 추후 작업 필요**
+  - `/api/me` 응답의 `name`: `customer_pii_secure` 복호화 연동 필요
+  - `/api/me` 응답의 `grade`: DynamoDB `dynamic_grade` 조회 연동 필요
+  - 온프레미스 실서버에 schema.sql 변경사항 마이그레이션 적용 필요 (컬럼 DROP/RENAME)
+
+---
+
+### 2026-05-13 (1차)
+
+- **Service-DB 분석 및 aurora_schema.sql 정리**
+  - `.tmp_extract/Service-DB/` 압축 해제 후 SQL 파일 8개 분석 완료
+  - Service-DB 구조 파악: `company_master`(6개) × `category_master`(15개) × `base_product_pool`(120) × `product_variant`(10) → `product_master` 1,200건 자동생성
+  - `recommend_rule`(score 기반 36+건), `cross_sell_rule`(53건), `campaign_master`(110건)
+  - grade 체계 변경 확인: BASIC/BRONZE/SILVER/GOLD/PLATINUM → VIP(90)/GOLD(80)/SILVER(70)/BASIC(60)/CARE(0)
+  - `clicked_flag`/`purchased_flag` CHAR(1) 방식 확인 (DATETIME 아님)
+  - aurora_schema.sql에 잘못 포함됐던 `users`/`consent` 테이블 위치 파악
+    - 아키텍처 14페이지 기준: users/consent는 온프레미스 전용 → Service-DB(aurora)에 없는 게 맞음
+
+- **lifesync360-platform 클라우드 전환 (app.py 전면 재작성)**
+  - 기존 mock 파일 백업: `mock_backup.zip` (app.py + mock_data.py)
+  - `get_db()` → `lifesync360` Service-DB 연결 (AURORA_HOST/DB_USER/DB_PASS/DB_NAME)
+  - `get_auth_db()` 신규 추가 → 온프레미스 auth DB 연결 (AUTH_DB_* 환경변수)
+  - `GRADE_SCORE_MAP`: VIP(90)/GOLD(80)/SILVER(70)/BASIC(60)/CARE(0) 반영
+  - `GRADE_BENEFITS`: BRONZE/PLATINUM 제거, VIP/GOLD/SILVER/BASIC/CARE 전환
+  - `COMPANIES`: 기존 키 → BANK/CARD/INS/ONINS/SEC/HLT (Service-DB company_code 일치)
+  - `api_recommendations`: DynamoDB `dynamic_grade` 기준 grade 조회, `min_score` 필터, `customer_recommend_history` INSERT
+  - `api_event`: `clicked_at=NOW()` → `clicked_flag='Y'` / `purchased_flag='Y'`
+  - `product/<product_code>`: product_code VARCHAR 조회, company_master + category_master + product_option JOIN
+  - `api_my_products`: `purchased_flag='Y'` 기준 조회
+  - 인증 라우트(register/login/me/consent) 전체 `get_auth_db()` 사용으로 전환
+  - `.env.example` 업데이트 (AUTH_DB_* 항목 추가)
+
+- **온프레미스 스키마 누락 버그 수정**
+  - `db/onprem_schema.sql`: users 테이블에 `global_id`/`grade` 컬럼 누락 → 추가
+  - `onprem-prod-repo/ansible/roles/mysql/files/schema.sql`: users 테이블 자체가 없었음 → 추가 (실제 배포 파일)
+  - 아키텍처 구성도 14페이지 확인 후 수정 — 초기 구성 시 참조 누락이 원인
+
+- **회원가입 flow 버그 3건 수정 (api_register)**
+  1. `global_id` NULL 유지 버그 → `G-{uuid.hex[:12].upper()}` 생성 코드 추가
+  2. `master_customer` INSERT 누락 → 회원가입 시 `representative_name`과 함께 INSERT
+  3. JWT `gid` 클레임에 `ls_user_id` 오입력 → 실제 `global_id` 사용으로 수정
+
+- **register.html 유효성 검사 추가**
+  - name/email/password input에 `required` 속성 추가
+  - password input에 `minlength="8"` 추가
+  - 클라이언트 JS 검증: 필수 항목 빈값 체크 + 8자 미만 체크
+  - phone/rrn 필드는 PII 암호화 파이프라인용으로 유지 (제거 안 함)
 
 ### 2026-05-12
 

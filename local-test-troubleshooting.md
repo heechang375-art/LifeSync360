@@ -389,6 +389,78 @@ sudo systemctl restart private-api
 
 ---
 
+## 증상: 회원가입 후 JWT에 global_id가 NULL / 빈값
+
+**발생 조건**: `USE_MOCK=false` 클라우드 연동 모드에서 회원가입 시.
+
+**원인 1 — global_id 미생성**
+`api_register`에서 `global_id`를 생성하는 코드가 없어 DB에 NULL로 저장됨.
+
+**원인 2 — master_customer INSERT 누락**
+`users` 테이블에만 INSERT하고 `master_customer`는 건너뜀. `master_customer.representative_name NOT NULL` 제약으로 온프레미스 스키마 무결성 위반.
+
+**원인 3 — JWT gid 클레임 오입력**
+`make_jwt(ls_user_id, global_id)` 호출 시 두 번째 인자에 `ls_user_id`를 넣어 `gid` 클레임이 틀린 값으로 발급됨.
+
+**수정 내용** (`app.py` `api_register` 함수):
+```python
+ls_user_id = f"LS-{datetime.datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+global_id  = f"G-{uuid.uuid4().hex[:12].upper()}"
+
+cur.execute('INSERT INTO master_customer (global_id, representative_name) VALUES (%s, %s)',
+            (global_id, name))
+cur.execute('INSERT INTO users (ls_user_id, global_id, email, name, password_hash) VALUES (%s, %s, %s, %s, %s)',
+            (ls_user_id, global_id, email, name, generate_password_hash(password)))
+db.commit()
+
+token = make_jwt(ls_user_id, global_id)   # global_id 올바르게 전달
+```
+
+**확인 방법**:
+```bash
+# 회원가입 후 JWT 디코드 (base64로 payload 부분 확인)
+TOKEN="eyJ..."
+echo $TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool
+# → "gid" 값이 "G-XXXX..." 형태여야 함 (ls_user_id 형태 LS-YYYYMMDD-XXXX면 버그)
+
+# DB 직접 확인 (ls-db VM)
+mysql -u lifesync -p lifesync_onprem \
+  -e "SELECT ls_user_id, global_id, name FROM users ORDER BY created_at DESC LIMIT 5;"
+
+mysql -u lifesync -p lifesync_onprem \
+  -e "SELECT global_id, representative_name FROM master_customer ORDER BY created_at DESC LIMIT 5;"
+```
+
+---
+
+## 증상: 회원가입 시 온프레미스 users 테이블 없음 오류
+
+```
+Table 'lifesync_onprem.users' doesn't exist
+```
+
+**원인**: `onprem-prod-repo/ansible/roles/mysql/files/schema.sql` (실제 배포 파일)에 `users` 테이블이 없었음. `db/onprem_schema.sql`에는 있었지만 Ansible이 배포하는 파일은 별개.
+
+**해결**: Ansible 배포 파일에 users 테이블 추가 후 재배포.
+```bash
+# EC2 Control Node에서
+cd /opt/ansible/onprem-prod-repo
+git pull
+
+ansible-playbook ansible/site.yml \
+  -i ansible/inventory/hosts.yml \
+  --vault-password-file ~/.vault_pass \
+  --limit ls-db
+
+# ls-db에서 테이블 확인
+mysql -u lifesync -p lifesync_onprem -e "SHOW TABLES;"
+# users 테이블이 목록에 있어야 함
+```
+
+이미 배포된 DB에는 Ansible 재배포로 자동 추가됨 (`CREATE TABLE IF NOT EXISTS` 사용 중).
+
+---
+
 ## 증상: IaC 재배포 후 VPN 터널 끊김
 
 매일 9AM IaC 재배포로 AWS VPN Connection이 재생성되면 터널 IP가 바뀌어 StrongSwan 연결이 끊김.

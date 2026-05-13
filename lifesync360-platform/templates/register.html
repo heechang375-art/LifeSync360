@@ -15,11 +15,11 @@
         <h2>회원가입</h2>
         <div class="form-group">
             <label>이름</label>
-            <input type="text" id="name" placeholder="실명을 입력하세요">
+            <input type="text" id="name" placeholder="실명을 입력하세요" required>
         </div>
         <div class="form-group">
             <label>이메일</label>
-            <input type="email" id="email" placeholder="example@email.com">
+            <input type="email" id="email" placeholder="example@email.com" required>
         </div>
         <div class="form-group">
             <label>휴대폰 번호</label>
@@ -31,7 +31,7 @@
         </div>
         <div class="form-group">
             <label>비밀번호</label>
-            <input type="password" id="password" placeholder="8자 이상 입력하세요">
+            <input type="password" id="password" placeholder="8자 이상 입력하세요" required minlength="8">
         </div>
         <p class="error-msg" id="error-msg"></p>
         <button class="btn-primary" id="register-btn">가입하기</button>
@@ -42,12 +42,26 @@
 
 <script>
     document.getElementById('register-btn').addEventListener('click', async () => {
+        const name     = document.getElementById('name').value.trim();
+        const email    = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value;
+        const errEl    = document.getElementById('error-msg');
+
+        if (!name || !email || !password) {
+            errEl.textContent = '이름, 이메일, 비밀번호는 필수 입력 항목입니다.';
+            return;
+        }
+        if (password.length < 8) {
+            errEl.textContent = '비밀번호는 8자 이상이어야 합니다.';
+            return;
+        }
+
         const payload = {
-            name: document.getElementById('name').value,
-            email: document.getElementById('email').value,
-            phone: document.getElementById('phone').value,
-            rrn: document.getElementById('rrn').value,
-            password: document.getElementById('password').value,
+            name,
+            email,
+            phone: document.getElementById('phone').value.trim(),
+            rrn:   document.getElementById('rrn').value.trim(),
+            password,
         };
         const res = await fetch('/api/register', {
             method: 'POST',

@@ -71,7 +71,8 @@
       "Bash(unzip -l Initial-Data-20260512T101305Z-3-001.zip)",
       "Bash(unzip -l Service-DB-20260512T102040Z-3-001.zip)",
       "Bash(unzip -o Initial-Data-20260512T101305Z-3-001.zip -d .tmp_extract/)",
-      "Bash(unzip -o Service-DB-20260512T102040Z-3-001.zip -d .tmp_extract/)"
+      "Bash(unzip -o Service-DB-20260512T102040Z-3-001.zip -d .tmp_extract/)",
+      "Bash(powershell -Command \"Compress-Archive -Path 'app.py','mock_data.py' -DestinationPath 'mock_backup.zip' -Force\")"
     ]
   }
 }
