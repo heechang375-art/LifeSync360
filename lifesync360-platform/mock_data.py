@@ -208,7 +208,7 @@ def _load_json_products(company_key, filename, max_products=4):
             cat = p.get('category', '')
             d = _desc(cat, raw)
             result.append({
-                'id':     f"{company_key}_{p.get('product_code', str(i))}",
+                'id':     p.get('product_code', str(i)),
                 'type':   _type_label(cat, raw),
                 'name':   name,
                 'desc':   d or '상세 정보 확인',

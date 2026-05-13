@@ -1,12 +1,13 @@
 """
 상품 카탈로그 Aurora 적재 스크립트
-데이터 소스: ../data/products/*.json (계열사별 분리 파일, 총 148개 상품)
-  bank.json              35개 (예적금, 대출)
-  card.json              20개 (신용/체크카드)
-  insurance.json         30개 (오프라인 보험)
+데이터 소스: ../data/products/*.json (계열사별 분리 파일, 총 161개 상품)
+  bank.json               35개 (예적금, 대출)
+  card.json               20개 (신용/체크카드)
+  insurance.json          30개 (오프라인 보험)
   internet_insurance.json 29개 (온라인 보험)
-  securities.json        19개 (투자 포트폴리오)
-  healthcare.json        15개 (운동/식단 추천)
+  securities.json         19개 (투자 포트폴리오)
+  healthcare.json         15개 (운동/식단 추천)
+  hospital.json           13개 (건강검진, 만성질환관리 등)
 
 실행 방법:
   1. .env 파일 작성 (AURORA_HOST, DB_USER, DB_PASS)
@@ -71,10 +72,27 @@ def extract_rec_condition(record: dict) -> str:
     if record.get('recommendation_condition'):
         return record['recommendation_condition']
     raw = record.get('raw', {})
-    for key in ('AI 추천 대상', '건강점수 기반 추천 조건', 'AI 추천 타겟', 'AI 추천 트리거', '대상 고객 조건'):
+    for key in ('AI 추천 조건', 'AI 추천 대상', 'AI 추천 타겟', '건강점수 기반 추천 조건', 'AI 추천 트리거', '대상 고객 조건'):
         if raw.get(key):
             return str(raw[key]).strip()
     return ''
+
+
+# 카테고리별 product_option 추출 키 목록
+_OPTION_KEYS = {
+    'deposit_product':            ['기준금리(연)', '우대금리조건', '가입기간', '최소가입금액'],
+    'savings_product':            ['기준금리(연)', '우대금리조건', '납입기간', '월 납입액'],
+    'loan_product':               ['최저금리(연)', '최고금리(연)', '대출한도', '상환방식'],
+    'card_product':               ['핵심 혜택', '포인트 적립 공식', '연회비(원)', '건강점수 연동 조건'],
+    'insurance_product':          ['주요 보장 내용', '특약 여부', '월 납부액(기준)', '보험기간'],
+    'internet_insurance_product': ['주요 보장 내용', '특약 여부', '월 납부액(기준)', '건강점수 기반 추천 조건'],
+    'portfolio_product':          ['채권/안전자산', '기대수익률(연)', '변동성', '최소 투자금액'],
+    'exercise_recommendation':    ['활동강도 (분/칼로리)', '추천 시 조건', '추천 이유 (우선순위)', '최대 횟수'],
+    'health_checkup':             ['검사 항목', '검진 결과 제공', '포인트 적립', '건강점수 연동'],
+    'specialized_checkup':        ['검사 항목', '검진 결과 제공', '포인트 적립', '건강점수 연동'],
+    'chronic_disease':            ['관리 항목', '서비스 내용', '포인트 적립', '건강점수 연동'],
+    'medical_service':            ['서비스 항목', '대상', '포인트 적립', '건강점수 연동'],
+}
 
 
 def extract_options(record: dict) -> list:
@@ -82,30 +100,12 @@ def extract_options(record: dict) -> list:
         return record['options']
 
     raw = record.get('raw', {})
-    sheet = record.get('source_sheet', '')
+    cat = record.get('category', '')
     opts = []
-
-    if '보험' in sheet:
-        for key in ('주요 보장 내용', '특약 여부', '월 납부액(기준)', '보험기간'):
-            if raw.get(key):
-                opts.append({'key': key, 'value': str(raw[key])})
-    elif '카드' in sheet:
-        for key in ('핵심 혜택', '포인트 적립 공식', '연회비(원)', '건강점수 연동 조건'):
-            if raw.get(key):
-                opts.append({'key': key, 'value': str(raw[key])})
-    elif '예적금' in sheet:
-        for key in ('기준금리(연)', '우대금리 조건', '가입기간', '최소가입금액'):
-            if raw.get(key):
-                opts.append({'key': key, 'value': str(raw[key])})
-    elif '대출' in sheet:
-        for key in ('금리범위', '최대한도', '대출기간', '상환방식'):
-            if raw.get(key):
-                opts.append({'key': key, 'value': str(raw[key])})
-    elif '금융상품' in sheet:
-        for key in ('채권/안전자산', '기대수익률(연)', '변동성', '최소 투자금액'):
-            if raw.get(key):
-                opts.append({'key': key, 'value': str(raw[key])})
-
+    for key in _OPTION_KEYS.get(cat, []):
+        val = str(raw.get(key, '')).strip()
+        if val and val not in ('nan', 'None'):
+            opts.append({'key': key, 'value': val})
     return opts
 
 
@@ -132,6 +132,21 @@ def main():
     total_options  = 0
     total_rules    = 0
 
+    categories = [
+        ('deposit_product',            'bank',               '예금',            'deposit'),
+        ('savings_product',            'bank',               '적금',            'savings'),
+        ('loan_product',               'bank',               '대출',            'loan'),
+        ('card_product',               'card',               '카드',            'card'),
+        ('insurance_product',          'insurance',          '보험',            'insurance'),
+        ('internet_insurance_product', 'internet_insurance', '온라인보험',      'internet_insurance'),
+        ('portfolio_product',          'securities',         '투자/포트폴리오', 'portfolio'),
+        ('exercise_recommendation',    'healthcare',         '운동추천',        'exercise'),
+        ('health_checkup',             'hospital',           '건강검진',        'checkup'),
+        ('specialized_checkup',        'hospital',           '전문검진',        'checkup'),
+        ('chronic_disease',            'hospital',           '만성질환관리',    'chronic'),
+        ('medical_service',            'hospital',           '의료서비스',      'medical'),
+    ]
+
     with conn.cursor() as cur:
         # 1. company_master (전체 등록 — 항상 실행)
         for cid, cname, ctype in companies:
@@ -142,7 +157,16 @@ def main():
             """, (cid, cname, ctype))
         print(f"[OK] company_master {len(companies)}개")
 
-        # 2. 계열사별 JSON 파일 순서대로 적재
+        # 2. category_master (전체 등록 — 항상 실행)
+        for cat_id, cid, cat_name, cat_type in categories:
+            cur.execute("""
+                INSERT INTO category_master (category_id, company_id, category_name, category_type)
+                VALUES (%s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE category_name = VALUES(category_name)
+            """, (cat_id, cid, cat_name, cat_type))
+        print(f"[OK] category_master {len(categories)}개")
+
+        # 3. 계열사별 JSON 파일 순서대로 적재
         for company_id in target_companies:
             json_path = PRODUCTS_DIR / f'{company_id}.json'
             if not json_path.exists():
