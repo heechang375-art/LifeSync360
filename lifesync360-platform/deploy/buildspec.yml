@@ -3,7 +3,7 @@ version: 0.2
 env:
   variables:
     CONTAINER_NAME: platform
-    CLUSTER_NAME: lifesync-dev-21-lifesync-ecs-existing-vpc-v4-EcsCluster-ZRqOqKu4Gzpb
+    CLUSTER_NAME: lifesync-service-ecs
     SERVICE_NAME: lifesync-dev-21-lifesync-ecs-existing-vpc-v4-svc
   parameter-store:
     ECR_URI: /lifesync360/ecr-uri
