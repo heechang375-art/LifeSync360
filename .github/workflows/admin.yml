@@ -65,7 +65,7 @@ jobs:
         run: |
           git config --global credential.helper '!aws codecommit credential-helper $@'
           git config --global credential.UseHttpPath true
-          git remote add codecommit https://git-codecommit.${{ env.AWS_REGION }}.amazonaws.com/v1/repos/lifesync-lifesync-admin
+          git remote add codecommit https://git-codecommit.${{ env.AWS_REGION }}.amazonaws.com/v1/repos/lifesync-lifesync-service-admin
           git subtree split --prefix=admin-platform -b _admin-deploy
           git push codecommit _admin-deploy:main --force
           git branch -D _admin-deploy
