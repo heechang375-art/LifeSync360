@@ -12,16 +12,19 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify
 app = Flask(__name__)
 JWT_SECRET          = os.environ.get('JWT_SECRET', 'dev-jwt-secret-lifesync360-32bytes!!')
 # USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() == 'true'
-USE_MOCK            = True  # 시연용 Mock 강제 (mock_data의 global_id로 DynamoDB 실데이터 조회)
+USE_MOCK            = False  # 비Mock — DynamoDB 실데이터 검증
 PROFILE_SYNC_LAMBDA  = os.environ.get('PROFILE_SYNC_LAMBDA', '')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 
-if USE_MOCK:
-    from mock_data import (
-        MOCK_USERS, MOCK_RECOMMENDATIONS, PRODUCTS_MAP, get_mock_health,
-        get_mock_upgrade_actions, MOCK_MY_PRODUCTS, MOCK_CONSENTED_KEYS,
-    )
+# if USE_MOCK:
+#     from mock_data import (
+#         MOCK_USERS, MOCK_RECOMMENDATIONS, PRODUCTS_MAP, get_mock_health,
+#         get_mock_upgrade_actions, MOCK_MY_PRODUCTS, MOCK_CONSENTED_KEYS,
+#     )
+
+# 인증만 Mock 강제 (Lambda 미배포 우회) — DynamoDB 등 다른 데이터는 비Mock 흐름
+from mock_data import MOCK_USERS
 
 COMPANIES = [
     {'key': 'BANK',       'name': 'LS 은행'},
@@ -291,24 +294,31 @@ def api_event():
     product_id   = data.get('product_id')      # Service-DB BIGINT product_id
     global_id    = payload['gid']
 
-    db = get_db()
+    # product_id 없는 이벤트(tab_click 등) 또는 Aurora 미설정 환경 안전 처리
+    if not product_id:
+        return jsonify({'status': 'ok'})
+
     try:
-        with db.cursor() as cur:
-            if event_type == 'recommendation_click' and product_id:
-                cur.execute(
-                    'UPDATE customer_recommend_history SET clicked_flag = %s '
-                    'WHERE global_id = %s AND product_id = %s AND clicked_flag = %s LIMIT 1',
-                    ('Y', global_id, product_id, 'N')
-                )
-            elif event_type == 'purchased' and product_id:
-                cur.execute(
-                    'UPDATE customer_recommend_history SET purchased_flag = %s '
-                    'WHERE global_id = %s AND product_id = %s AND purchased_flag = %s LIMIT 1',
-                    ('Y', global_id, product_id, 'N')
-                )
-        db.commit()
-    finally:
-        db.close()
+        db = get_db()
+        try:
+            with db.cursor() as cur:
+                if event_type == 'recommendation_click':
+                    cur.execute(
+                        'UPDATE customer_recommend_history SET clicked_flag = %s '
+                        'WHERE global_id = %s AND product_id = %s AND clicked_flag = %s LIMIT 1',
+                        ('Y', global_id, product_id, 'N')
+                    )
+                elif event_type == 'purchased':
+                    cur.execute(
+                        'UPDATE customer_recommend_history SET purchased_flag = %s '
+                        'WHERE global_id = %s AND product_id = %s AND purchased_flag = %s LIMIT 1',
+                        ('Y', global_id, product_id, 'N')
+                    )
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        pass
     return jsonify({'status': 'ok'})
 
 
