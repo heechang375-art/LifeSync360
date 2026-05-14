@@ -2,9 +2,10 @@ version: 0.2
 
 env:
   variables:
-    CONTAINER_NAME: platform
+    CONTAINER_NAME: app
     CLUSTER_NAME: lifesync-service-ecs
     SERVICE_NAME: lifesync-dev-21-lifesync-ecs-existing-vpc-v4-svc
+    TASKDEF_FAMILY: lifesync-dev-21-lifesync-ecs-existing-vpc-v4-td
   parameter-store:
     ECR_URI: /lifesync360/ecr-uri
 
@@ -23,6 +24,11 @@ phases:
     commands:
       - docker push $ECR_URI:$IMAGE_TAG
       - docker push $ECR_URI:latest
+      # ★ taskdef.json의 env/secrets 정합으로 새 revision 등록 + force-deploy
+      - sed "s|<IMAGE1_NAME>|$ECR_URI:$IMAGE_TAG|" taskdef.json > /tmp/td.json
+      - NEW_TD=$(aws ecs register-task-definition --cli-input-json file:///tmp/td.json --query 'taskDefinition.taskDefinitionArn' --output text --region $AWS_DEFAULT_REGION)
+      - echo "Registered new TaskDef ARN $NEW_TD"
+      - aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --task-definition $NEW_TD --force-new-deployment --region $AWS_DEFAULT_REGION
       - printf '[{"name":"%s","imageUri":"%s:%s"}]' $CONTAINER_NAME $ECR_URI $IMAGE_TAG > imagedefinitions.json
       - |
         aws application-autoscaling register-scalable-target \
