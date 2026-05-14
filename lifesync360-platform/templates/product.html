@@ -44,13 +44,17 @@
 </div>
 
 <script>
+    const PRODUCT_ID = {{ item.product_id | default('null') }};
+
     function emitEvent(type, target) {
         const token = localStorage.getItem('ls_token');
         if (!token) return;
+        const body = { event_type: type, event_target: target };
+        if (PRODUCT_ID) body.product_id = PRODUCT_ID;
         fetch('/api/event', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ event_type: type, event_target: target }),
+            body: JSON.stringify(body),
         }).catch(() => {});
     }
     emitEvent('product_view', '{{ item.name | e }}');

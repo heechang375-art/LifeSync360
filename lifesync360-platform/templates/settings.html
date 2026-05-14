@@ -52,13 +52,9 @@
                         <span class="info-label">이름</span>
                         <span class="info-value" id="s-name">-</span>
                     </div>
-                    <div class="settings-info-row">
+                    <div class="settings-info-row" style="border-bottom:none;">
                         <span class="info-label">이메일</span>
                         <span class="info-value" id="s-email">-</span>
-                    </div>
-                    <div class="settings-info-row" style="border-bottom:none;">
-                        <span class="info-label">회원번호</span>
-                        <span class="info-value mono" id="s-userid">-</span>
                     </div>
                 </div>
             </div>
@@ -76,10 +72,6 @@
                         <span class="benefit-desc" id="sel-grade-desc">-</span>
                     </div>
                     <ul class="benefit-list" id="sel-benefit-list"></ul>
-                </div>
-                <div id="upgrade-actions-section" style="display:none">
-                    <div class="settings-section-label">등급 업그레이드 가이드</div>
-                    <div class="settings-card" id="upgrade-actions-container" style="padding: 4px 16px;"></div>
                 </div>
             </div>
 
@@ -165,17 +157,13 @@
         if (!token) { window.location.href = '/login'; return; }
         const headers = { 'Authorization': `Bearer ${token}` };
 
-        const [meRes, actionsRes] = await Promise.all([
-            fetch('/api/me', { headers }),
-            fetch('/api/upgrade-actions', { headers }),
-        ]);
+        const meRes = await fetch('/api/me', { headers });
 
         if (!meRes.ok) { window.location.href = '/login'; return; }
         const user = await meRes.json();
 
         document.getElementById('s-name').textContent = user.name;
         document.getElementById('s-email').textContent = user.email;
-        document.getElementById('s-userid').textContent = user.ls_user_id;
 
         document.querySelectorAll('.ladder-btn').forEach(btn => {
             if (btn.dataset.grade === user.grade) btn.classList.add('current-grade');
@@ -186,26 +174,6 @@
         document.querySelectorAll('#view-consent input[type=checkbox]').forEach(el => {
             el.checked = saved.length === 0 || saved.includes(el.name);
         });
-
-        if (actionsRes.ok) {
-            const actions = await actionsRes.json();
-            if (actions.length) {
-                document.getElementById('upgrade-actions-container').innerHTML = actions.map(a => `
-                    <div class="upgrade-action-item">
-                        <span class="upgrade-icon">${a.icon}</span>
-                        <div class="upgrade-info">
-                            <div class="upgrade-title">${a.title}</div>
-                            <div class="upgrade-desc">${a.desc}</div>
-                        </div>
-                        <div class="upgrade-rewards">
-                            <span class="upgrade-points">${a.points}</span>
-                            <span class="upgrade-badge">${a.badge}</span>
-                        </div>
-                    </div>
-                `).join('');
-                document.getElementById('upgrade-actions-section').style.display = '';
-            }
-        }
     })();
 
     document.querySelectorAll('.ladder-btn').forEach(btn => {

@@ -11,13 +11,7 @@
     <header class="header">
         <div class="header-inner">
             <span class="grade-badge" id="grade-badge">-</span>
-            <button class="back-btn" id="my-back-btn" style="display:none" onclick="showMyList()">
-                <svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="15 18 9 12 15 6"/>
-                </svg>
-            </button>
             <span class="logo" id="header-logo">LifeSync<span>360</span></span>
-            <span class="header-title" id="header-my-company" style="display:none">-</span>
             <a class="header-username" id="header-username" href="/settings">-</a>
         </div>
     </header>
@@ -42,8 +36,6 @@
                         <div class="score-toggle">
                             <button class="toggle-btn active" data-score="0" data-label="종합점수">종합</button>
                             <button class="toggle-btn" data-score="0" data-label="건강점수">건강</button>
-                            <button class="toggle-btn" data-score="0" data-label="금융점수">금융</button>
-                            <button class="toggle-btn" data-score="0" data-label="행동점수">행동</button>
                         </div>
                     </div>
                 </div>
@@ -89,38 +81,12 @@
 
         <!-- ── MY 탭 ── -->
         <section id="tab-my" class="tab-content">
-            <div id="my-list">
-
-                <!-- 세그먼트 컨트롤 -->
-                <div class="my-seg-bar">
-                    <button class="my-seg-btn active" data-sec="companies" onclick="switchMySection('companies')">계열사</button>
-                    <button class="my-seg-btn" data-sec="spending" onclick="switchMySection('spending')">소비패턴</button>
+            <div class="my-section-card">
+                <div class="my-section-title">소비 패턴</div>
+                <div id="spending-bars">
+                    <p class="spending-placeholder">데이터를 불러오는 중...</p>
                 </div>
-
-                <!-- 계열사 섹션 -->
-                <div id="my-sec-companies">
-                    <div class="menu-section">
-                        {% for co in companies %}
-                        <div class="menu-item" onclick="showMyDetail('{{ co.key }}', '{{ co.name }}')">
-                            <span class="menu-label">{{ co.name }}</span>
-                            <svg class="menu-chevron-icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-
-                <!-- 소비패턴 섹션 -->
-                <div id="my-sec-spending" style="display:none">
-                    <div class="my-section-card">
-                        <div class="my-section-title">소비 패턴</div>
-                        <div id="spending-bars">
-                            <p class="spending-placeholder">데이터를 불러오는 중...</p>
-                        </div>
-                    </div>
-                </div>
-
             </div>
-            <div id="my-detail" style="display:none"></div>
         </section>
 
     </main>
@@ -186,8 +152,6 @@
                 const scoreMap = {
                     '종합점수': scores.dynamic_score,
                     '건강점수': scores.health_score,
-                    '금융점수': scores.fin_score,
-                    '행동점수': scores.behavior_score,
                 };
                 document.querySelectorAll('.toggle-btn').forEach(btn => {
                     const v = scoreMap[btn.dataset.label];
@@ -257,14 +221,6 @@
         if (e.target === this) closeHealthModal();
     });
 
-    function switchMySection(key) {
-        document.querySelectorAll('.my-seg-btn').forEach(b =>
-            b.classList.toggle('active', b.dataset.sec === key)
-        );
-        document.getElementById('my-sec-companies').style.display = key === 'companies' ? '' : 'none';
-        document.getElementById('my-sec-spending').style.display  = key === 'spending'  ? '' : 'none';
-    }
-
     function switchToRecommendTab() {
         document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -274,8 +230,6 @@
 
     document.querySelectorAll('.nav-btn[data-tab]').forEach(btn => {
         btn.addEventListener('click', () => {
-            const activeTab = document.querySelector('.nav-btn.active')?.dataset.tab;
-            if (activeTab === 'my') showMyList();
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
             btn.classList.add('active');
@@ -300,59 +254,6 @@
             if (name) emitEvent('recommendation_click', name);
         });
     });
-
-    async function showMyDetail(companyKey, companyName) {
-        document.getElementById('my-list').style.display = 'none';
-        const detail = document.getElementById('my-detail');
-        detail.innerHTML = '<p style="padding:20px 16px;color:var(--text-sub);font-size:13px">불러오는 중...</p>';
-        detail.style.display = 'block';
-        document.getElementById('my-back-btn').style.display = '';
-        document.getElementById('grade-badge').style.display = 'none';
-        document.getElementById('header-logo').style.display = 'none';
-        document.getElementById('header-my-company').style.display = '';
-        document.getElementById('header-my-company').textContent = companyName;
-
-        const token = localStorage.getItem('ls_token');
-        const res = await fetch(`/api/my-products?company=${companyKey}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (res.status === 403) {
-            detail.innerHTML = `<div class="company-empty">
-                <p class="company-empty-msg">데이터 활용 동의가 필요합니다</p>
-                <p class="company-empty-sub">설정 &gt; 데이터 활용 동의에서<br>해당 계열사 동의 후 이용 가능합니다</p>
-                <a class="btn-outline" href="/settings" style="display:inline-block;margin-top:16px;font-size:13px;padding:8px 20px;">동의 설정 바로가기</a>
-            </div>`;
-            return;
-        }
-        if (!res.ok) {
-            detail.innerHTML = `<div class="company-empty"><p class="company-empty-msg">데이터를 불러올 수 없습니다</p></div>`;
-            return;
-        }
-        const products = await res.json();
-        if (!products.length) {
-            detail.innerHTML = `<div class="company-empty"><p class="company-empty-msg">보유 상품이 없습니다</p><p class="company-empty-sub">해당 계열사에 가입한 상품이 없습니다</p></div>`;
-            return;
-        }
-        detail.innerHTML = `<div class="my-product-list">${products.map(p => `
-            <div class="my-product-item">
-                <span class="my-product-type-badge">${p.type}</span>
-                <div class="my-product-info">
-                    <div class="my-product-name">${p.name}</div>
-                    <div class="my-product-meta">${p.meta}</div>
-                </div>
-                <span class="my-product-status sc-${p.sc}">${p.status}</span>
-            </div>
-        `).join('')}</div>`;
-    }
-
-    function showMyList() {
-        document.getElementById('my-detail').style.display = 'none';
-        document.getElementById('my-list').style.display = '';
-        document.getElementById('my-back-btn').style.display = 'none';
-        document.getElementById('grade-badge').style.display = '';
-        document.getElementById('header-logo').style.display = '';
-        document.getElementById('header-my-company').style.display = 'none';
-    }
 
     function emitEvent(eventType, eventTarget) {
         const token = localStorage.getItem('ls_token');

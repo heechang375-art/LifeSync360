@@ -8,7 +8,8 @@ from flask import Flask, render_template, request, redirect, url_for, session
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'admin-dev-secret-32bytes-lifesync!!')  # TODO: 운영 배포 시 env var로 교체
 
-USE_MOCK             = os.environ.get('USE_MOCK', 'true').lower() == 'true'
+# USE_MOCK             = os.environ.get('USE_MOCK', 'true').lower() == 'true'
+USE_MOCK             = False  # Cloud 데이터 모드 강제 (Mock 부활: True 변경 + 아래 import 복원)
 ADMIN_USER           = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS           = os.environ.get('ADMIN_PASSWORD', 'admin1234')  # TODO: 운영 배포 시 env var로 교체
 DYNAMO_TABLE         = os.environ.get('DYNAMO_TABLE', 'lifesync-scores')
@@ -27,13 +28,13 @@ CONSENT_LABELS = {
     'WEARABLE':   '웨어러블',
 }
 
-if USE_MOCK:
-    from mock_data import (
-        MOCK_USERS, MOCK_SCORES,
-        MOCK_CONSENTS, MOCK_RECOMMEND_HISTORY, MOCK_IDENTITIES,
-        MOCK_CAMPAIGNS, MOCK_RECENT_RECOMMENDS,
-        MOCK_PRODUCT_FUNNEL, MOCK_TOP_VIEWED, MOCK_TAB_CLICKS,
-    )
+# if USE_MOCK:
+#     from mock_data import (
+#         MOCK_USERS, MOCK_SCORES,
+#         MOCK_CONSENTS, MOCK_RECOMMEND_HISTORY, MOCK_IDENTITIES,
+#         MOCK_CAMPAIGNS, MOCK_RECENT_RECOMMENDS,
+#         MOCK_PRODUCT_FUNNEL, MOCK_TOP_VIEWED, MOCK_TAB_CLICKS,
+#     )
 
 
 # ── DB / DynamoDB 헬퍼 ────────────────────────────────

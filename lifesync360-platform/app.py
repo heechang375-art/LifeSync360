@@ -10,18 +10,18 @@ import boto3
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 
 app = Flask(__name__)
-JWT_SECRET          = os.environ.get('JWT_SECRET', 'dev-jwt-secret-lifesync360-32bytes!!')  
-USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() == 'true'
-# USE_MOCK            = os.environ.get('USE_MOCK', 'false').lower() == 'false'  # 실제 배포에서는 MOCK 사용 안함
+JWT_SECRET          = os.environ.get('JWT_SECRET', 'dev-jwt-secret-lifesync360-32bytes!!')
+# USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() == 'true'
+USE_MOCK            = False  # Cloud 데이터 모드 강제 (Mock 부활: True 변경 + 아래 import 복원)
 PROFILE_SYNC_LAMBDA  = os.environ.get('PROFILE_SYNC_LAMBDA', '')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 
-if USE_MOCK:
-    from mock_data import (
-        MOCK_USERS, MOCK_RECOMMENDATIONS, PRODUCTS_MAP, get_mock_health,
-        get_mock_upgrade_actions, MOCK_MY_PRODUCTS, MOCK_CONSENTED_KEYS,
-    )
+# if USE_MOCK:
+#     from mock_data import (
+#         MOCK_USERS, MOCK_RECOMMENDATIONS, PRODUCTS_MAP, get_mock_health,
+#         get_mock_upgrade_actions, MOCK_MY_PRODUCTS, MOCK_CONSENTED_KEYS,
+#     )
 
 COMPANIES = [
     {'key': 'BANK',       'name': 'LS 은행'},
@@ -524,8 +524,6 @@ def api_dashboard():
         'no_data':          False,
         'dynamic_score':    _f('dynamic_score'),
         'health_score':     _f('health_score'),
-        'fin_score':        _f('fin_score'),
-        'behavior_score':   _f('behavior_score'),
         'next_best_action': item.get('next_best_action'),
         'update_time':      item.get('update_time'),
     })
