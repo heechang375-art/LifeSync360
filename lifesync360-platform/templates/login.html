@@ -32,18 +32,30 @@
     document.getElementById('login-btn').addEventListener('click', async () => {
         const email = document.getElementById('email').value;
         const password = document.getElementById('password').value;
-        const res = await fetch('/api/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-            document.getElementById('error-msg').textContent = data.error;
-            return;
+        const errEl = document.getElementById('error-msg');
+        errEl.textContent = '';
+        try {
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
+            });
+            let data;
+            try {
+                data = await res.json();
+            } catch (_) {
+                errEl.textContent = `서버 응답 오류 (status: ${res.status})`;
+                return;
+            }
+            if (!res.ok) {
+                errEl.textContent = (data.detail ? `${data.error} — ${data.detail}` : data.error) || `로그인 실패 (status: ${res.status})`;
+                return;
+            }
+            localStorage.setItem('ls_token', data.token);
+            window.location.href = '/';
+        } catch (e) {
+            errEl.textContent = `네트워크 오류: ${e.message}`;
         }
-        localStorage.setItem('ls_token', data.token);
-        window.location.href = '/';
     });
 </script>
 </body>

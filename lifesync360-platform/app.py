@@ -23,6 +23,9 @@ AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 #         get_mock_upgrade_actions, MOCK_MY_PRODUCTS, MOCK_CONSENTED_KEYS,
 #     )
 
+# 임시: Lambda 미배포 검증용 — 인증만 Mock 사용 (다른 라우트는 비Mock 그대로)
+from mock_data import MOCK_USERS
+
 COMPANIES = [
     {'key': 'BANK',       'name': 'LS 은행'},
     {'key': 'CARD',       'name': 'LS 카드'},
@@ -162,56 +165,22 @@ def decode_jwt(token):
 # ── API ──────────────────────────────────────────────
 @app.route('/api/register', methods=['POST'])
 def api_register():
-    data = request.get_json()
-    if USE_MOCK:
-        user = list(MOCK_USERS.values())[0]
-        token = make_jwt(user['ls_user_id'], user['global_id'])
-        return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
-
-    name     = (data.get('name') or '').strip()
-    email    = (data.get('email') or '').strip()
-    password = data.get('password') or ''
-    if not name or not email or not password:
-        return jsonify({'error': '이름, 이메일, 비밀번호는 필수 입력 항목입니다.'}), 400
-    if len(password) < 8:
-        return jsonify({'error': '비밀번호는 8자 이상이어야 합니다.'}), 400
-
-    ls_user_id = f"LS-{datetime.datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
-    global_id  = f"G-{uuid.uuid4().hex[:12].upper()}"
-    try:
-        _call_onprem('register',
-            ls_user_id=ls_user_id,
-            global_id=global_id,
-            email=data['email'],
-            password_hash=hashlib.sha256(data['password'].encode('utf-8')).hexdigest(),
-            name=name,
-            mobile=(data.get('phone') or '').strip() or None,
-            rrn=(data.get('rrn') or '').strip() or None,
-        )
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 400
-    token = make_jwt(ls_user_id, global_id)
-    return jsonify({'token': token, 'ls_user_id': ls_user_id})
+    # 임시: Lambda 미배포 검증용 — 인증만 Mock 강제
+    user = list(MOCK_USERS.values())[0]
+    token = make_jwt(user['ls_user_id'], user['global_id'])
+    return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
 
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
-    data     = request.get_json()
+    # 임시: Lambda 미배포 검증용 — 인증만 Mock 강제
+    data     = request.get_json() or {}
     email    = data.get('email', '')
     password = data.get('password', '')
 
-    if USE_MOCK:
-        user = MOCK_USERS.get(email)
-        if not user or hashlib.sha256(password.encode('utf-8')).hexdigest() != user['password_hash']:
-            return jsonify({'error': '이메일 또는 비밀번호가 올바르지 않습니다.'}), 401
-        token = make_jwt(user['ls_user_id'], user['global_id'])
-        return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
-
-    try:
-        user  = _call_onprem('login', email=email, password=password)
-    except ValueError:
+    user = MOCK_USERS.get(email)
+    if not user or hashlib.sha256(password.encode('utf-8')).hexdigest() != user['password_hash']:
         return jsonify({'error': '이메일 또는 비밀번호가 올바르지 않습니다.'}), 401
-
     token = make_jwt(user['ls_user_id'], user['global_id'])
     return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
 
@@ -235,12 +204,18 @@ def api_me():
                 'email':      user['email'],
             })
 
+        # Mock 유저 fallback 준비 (Lambda 미배포 검증용)
+        _mock_user = next((u for u in MOCK_USERS.values() if u['ls_user_id'] == payload['sub']), None)
+
+        login_email = None
+        global_id   = payload['gid']
         try:
             user = _call_onprem('get_user', ls_user_id=payload['sub'])
-        except ValueError:
-            return jsonify({'error': 'user not found'}), 404
-
-        global_id = user.get('global_id', payload['gid'])
+            login_email = user.get('login_email')
+            global_id   = user.get('global_id', global_id)
+        except Exception:
+            if _mock_user:
+                login_email = _mock_user.get('email')
 
         grade = None
         try:
@@ -263,14 +238,15 @@ def api_me():
             pii  = _call_onprem('get_pii', global_id=global_id)
             name = pii.get('name')
         except Exception:
-            pass
+            if _mock_user:
+                name = _mock_user.get('name')
 
         return jsonify({
             'ls_user_id': payload['sub'],
             'global_id':  global_id,
             'name':       name,
             'grade':      grade,
-            'email':      user['login_email'],
+            'email':      login_email,
             'consents':   consents,
             'profile':    profile,
         })

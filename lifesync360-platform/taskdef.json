@@ -18,7 +18,7 @@
       ],
       "environment": [
         { "name": "AWS_REGION",    "value": "ap-northeast-2" },
-        { "name": "DB_NAME",       "value": "lifesync" },
+        { "name": "DB_NAME",       "value": "lifesync360" },
         { "name": "DYNAMO_TABLE",  "value": "lifesync-scores" },
         { "name": "REDIS_PORT",    "value": "6379" },
         { "name": "USE_MOCK",              "value": "false" },
