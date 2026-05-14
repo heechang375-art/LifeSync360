@@ -20,6 +20,7 @@ AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 from mock_data import (
     MOCK_USERS, MOCK_RECOMMENDATIONS, PRODUCTS_MAP, get_mock_health,
     get_mock_upgrade_actions, MOCK_MY_PRODUCTS, MOCK_CONSENTED_KEYS,
+    get_mock_campaigns,
 )
 
 COMPANIES = [
@@ -198,6 +199,19 @@ def api_me():
                 'name':       user['name'],
                 'grade':      user['grade'],
                 'email':      user['email'],
+                # 인구통계 (customer_360_profile)
+                'gender':        user.get('gender'),
+                'age_band':      user.get('age_band'),
+                'region':        user.get('region'),
+                'income_grade':  user.get('income_grade'),
+                'asset_grade':   user.get('asset_grade'),
+                'wearable_flag': user.get('wearable_flag'),
+                # 마스터 (master_customer)
+                'customer_status':  user.get('customer_status'),
+                'vip_grade':        user.get('vip_grade'),
+                'customer_type':    user.get('customer_type'),
+                'first_created_dt': user.get('first_created_dt'),
+                'last_login_dt':    user.get('last_login_dt'),
             })
 
         # Mock 유저 fallback 준비 (Lambda 미배포 검증용)
@@ -468,6 +482,52 @@ def api_my_products():
         db.close()
 
     return jsonify(products)
+
+
+@app.route('/api/campaigns')
+def api_campaigns():
+    """등급별 활성 캠페인 배너"""
+    auth  = request.headers.get('Authorization', '')
+    token = auth.removeprefix('Bearer ').strip()
+    try:
+        payload = decode_jwt(token)
+    except jwt.InvalidTokenError:
+        return jsonify({'error': 'invalid token'}), 401
+
+    grade = 'BASIC'
+    if USE_MOCK:
+        user = next((u for u in MOCK_USERS.values() if u['ls_user_id'] == payload['sub']), None)
+        if user:
+            grade = user.get('grade', 'BASIC')
+        return jsonify(get_mock_campaigns(grade))
+
+    try:
+        item  = get_dynamo_table().get_item(Key={'global_id': payload['gid']}).get('Item', {})
+        grade = item.get('dynamic_grade', 'BASIC')
+    except Exception:
+        pass
+
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("""
+                SELECT campaign_name, banner_title, banner_desc, start_date, end_date
+                FROM campaign_master
+                WHERE target_grade = %s AND active_flag = 'Y'
+                  AND end_date >= CURDATE()
+                ORDER BY start_date DESC
+                LIMIT 5
+            """, (grade,))
+            rows = cur.fetchall()
+    except Exception:
+        rows = []
+    finally:
+        db.close()
+    return jsonify([
+        {'icon': '🎯', 'title': r['campaign_name'], 'desc': r['banner_desc'],
+         'period': f"{r['start_date']} ~ {r['end_date']}", 'cta': '자세히 보기'}
+        for r in rows
+    ])
 
 
 @app.route('/health')

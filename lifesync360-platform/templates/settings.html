@@ -52,9 +52,40 @@
                         <span class="info-label">이름</span>
                         <span class="info-value" id="s-name">-</span>
                     </div>
-                    <div class="settings-info-row" style="border-bottom:none;">
+                    <div class="settings-info-row">
                         <span class="info-label">이메일</span>
                         <span class="info-value" id="s-email">-</span>
+                    </div>
+                    <div class="settings-info-row">
+                        <span class="info-label">가입일</span>
+                        <span class="info-value" id="s-joined">-</span>
+                    </div>
+                    <div class="settings-info-row" style="border-bottom:none;">
+                        <span class="info-label">최근 로그인</span>
+                        <span class="info-value" id="s-lastlogin">-</span>
+                    </div>
+                </div>
+                <div class="settings-section-label" style="margin-top:16px;">분석 프로파일</div>
+                <div class="settings-card">
+                    <div class="settings-info-row">
+                        <span class="info-label">연령대</span>
+                        <span class="info-value" id="s-age">-</span>
+                    </div>
+                    <div class="settings-info-row">
+                        <span class="info-label">지역</span>
+                        <span class="info-value" id="s-region">-</span>
+                    </div>
+                    <div class="settings-info-row">
+                        <span class="info-label">소득 등급</span>
+                        <span class="info-value" id="s-income">-</span>
+                    </div>
+                    <div class="settings-info-row">
+                        <span class="info-label">자산 등급</span>
+                        <span class="info-value" id="s-asset">-</span>
+                    </div>
+                    <div class="settings-info-row" style="border-bottom:none;">
+                        <span class="info-label">웨어러블 연동</span>
+                        <span class="info-value" id="s-wearable">-</span>
                     </div>
                 </div>
             </div>
@@ -162,8 +193,22 @@
         if (!meRes.ok) { window.location.href = '/login'; return; }
         const user = await meRes.json();
 
-        document.getElementById('s-name').textContent = user.name;
-        document.getElementById('s-email').textContent = user.email;
+        document.getElementById('s-name').textContent = user.name || '-';
+        document.getElementById('s-email').textContent = user.email || '-';
+
+        // 가입일/최근로그인
+        document.getElementById('s-joined').textContent = user.first_created_dt || '-';
+        document.getElementById('s-lastlogin').textContent = user.last_login_dt || '-';
+
+        // 인구통계
+        const _ageMap = { '20s':'20대', '30s':'30대', '40s':'40대', '50s':'50대', '60s':'60대', '70s':'70대' };
+        const _regionMap = { 'SEOUL':'서울', 'GYEONGGI':'경기', 'BUSAN':'부산', 'INCHEON':'인천', 'DAEGU':'대구', 'DAEJEON':'대전', 'GWANGJU':'광주', 'ULSAN':'울산' };
+        const _gradeMap = { 'LOW':'낮음', 'MID':'중간', 'HIGH':'높음' };
+        document.getElementById('s-age').textContent      = _ageMap[user.age_band] || user.age_band || '-';
+        document.getElementById('s-region').textContent   = _regionMap[user.region] || user.region || '-';
+        document.getElementById('s-income').textContent   = _gradeMap[user.income_grade] || user.income_grade || '-';
+        document.getElementById('s-asset').textContent    = _gradeMap[user.asset_grade] || user.asset_grade || '-';
+        document.getElementById('s-wearable').textContent = user.wearable_flag === 'Y' ? '연동됨' : '미연동';
 
         document.querySelectorAll('.ladder-btn').forEach(btn => {
             if (btn.dataset.grade === user.grade) btn.classList.add('current-grade');

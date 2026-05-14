@@ -20,3 +20,4 @@ venv/
 # 빌드/패키징
 *.zip
 ~$*
+files_extract/

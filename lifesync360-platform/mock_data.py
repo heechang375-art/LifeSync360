@@ -8,6 +8,9 @@ _PW_HASH = hashlib.sha256('password123'.encode('utf-8')).hexdigest()
 _PRODUCTS_DIR = Path(__file__).parent.parent / 'data' / 'products'
 
 # ── 사용자 (3명) ──────────────────────────────────────────────────
+# DynamoDB lifesync_customer_result 매핑: global_id, dynamic_grade, vip_prob, signup_prob, rec_prob, next_best_action
+# 온프레 customer_360_profile 매핑: gender, age_band, region, income_grade, asset_grade, wearable_flag, risk_score, finance_score, asset_score, lifesync_score
+# 온프레 master_customer 매핑: customer_status, vip_grade, customer_type, first_created_dt
 MOCK_USERS = {
     'test@lifesync.com': {
         'ls_user_id':    'LS-AABBCC11-000001',
@@ -15,7 +18,25 @@ MOCK_USERS = {
         'name':          '김철수',
         'email':         'test@lifesync.com',
         'password_hash': _PW_HASH,
-        'grade':         'PLATINUM',
+        'grade':         'VIP',
+        # 인구통계 (customer_360_profile)
+        'gender':        'M',
+        'age_band':      '40s',
+        'region':        'SEOUL',
+        'income_grade':  'HIGH',
+        'asset_grade':   'HIGH',
+        'wearable_flag': 'Y',
+        # 마스터 (master_customer)
+        'customer_status': 'ACTIVE',
+        'vip_grade':       'GOLD',
+        'customer_type':   'INDIVIDUAL',
+        'first_created_dt':'2022-03-15',
+        'last_login_dt':   '2026-05-13 18:24',
+        # ML 확률 (DynamoDB)
+        'vip_prob':         0.85,
+        'signup_prob':      0.72,
+        'rec_prob':         0.91,
+        'next_best_action': '프리미엄 건강검진 예약하기',
     },
     'test2@lifesync.com': {
         'ls_user_id':    'LS-DDEEFF22-000002',
@@ -24,6 +45,21 @@ MOCK_USERS = {
         'email':         'test2@lifesync.com',
         'password_hash': _PW_HASH,
         'grade':         'GOLD',
+        'gender':        'F',
+        'age_band':      '30s',
+        'region':        'GYEONGGI',
+        'income_grade':  'MID',
+        'asset_grade':   'MID',
+        'wearable_flag': 'Y',
+        'customer_status': 'ACTIVE',
+        'vip_grade':       'SILVER',
+        'customer_type':   'INDIVIDUAL',
+        'first_created_dt':'2023-08-02',
+        'last_login_dt':   '2026-05-14 09:11',
+        'vip_prob':         0.58,
+        'signup_prob':      0.66,
+        'rec_prob':         0.79,
+        'next_best_action': 'ETF 적립식 투자 시작',
     },
     'test3@lifesync.com': {
         'ls_user_id':    'LS-99AABB33-000003',
@@ -32,6 +68,21 @@ MOCK_USERS = {
         'email':         'test3@lifesync.com',
         'password_hash': _PW_HASH,
         'grade':         'SILVER',
+        'gender':        'M',
+        'age_band':      '50s',
+        'region':        'BUSAN',
+        'income_grade':  'MID',
+        'asset_grade':   'LOW',
+        'wearable_flag': 'N',
+        'customer_status': 'ACTIVE',
+        'vip_grade':       'NORMAL',
+        'customer_type':   'INDIVIDUAL',
+        'first_created_dt':'2024-01-20',
+        'last_login_dt':   '2026-05-12 22:48',
+        'vip_prob':         0.32,
+        'signup_prob':      0.51,
+        'rec_prob':         0.64,
+        'next_best_action': '실손 의료보험 가입 검토',
     },
 }
 
@@ -39,7 +90,18 @@ MOCK_USERS = {
 # breakdown: 심혈관 max 35 / 활동 max 35 / 신체지표 max 20 / 임상 max 10
 _HEALTH_BY_USER = {
     'LS-AABBCC11-000001': {
+        # DynamoDB 점수
         'dynamic_score': 92.4, 'health_score': 88, 'fin_score': 85, 'behavior_score': 76,
+        # customer_360_profile 점수 (운영 시 onprem)
+        'risk_score':     22.5,
+        'finance_score':  85.0,
+        'asset_score':    78.5,
+        'lifesync_score': 91.2,
+        # DynamoDB ML 확률 + NBA
+        'vip_prob':         0.85,
+        'signup_prob':      0.72,
+        'rec_prob':         0.91,
+        'next_best_action': '프리미엄 건강검진 예약하기',
         'breakdown': [
             {'label': '심혈관',   'score': 32, 'max': 35},
             {'label': '활동',     'score': 31, 'max': 35},
@@ -62,6 +124,14 @@ _HEALTH_BY_USER = {
     },
     'LS-DDEEFF22-000002': {
         'dynamic_score': 74.0, 'health_score': 72, 'fin_score': 68, 'behavior_score': 81,
+        'risk_score':     35.0,
+        'finance_score':  68.0,
+        'asset_score':    62.5,
+        'lifesync_score': 73.2,
+        'vip_prob':         0.58,
+        'signup_prob':      0.66,
+        'rec_prob':         0.79,
+        'next_best_action': 'ETF 적립식 투자 시작',
         'breakdown': [
             {'label': '심혈관',   'score': 24, 'max': 35},
             {'label': '활동',     'score': 26, 'max': 35},
@@ -84,6 +154,14 @@ _HEALTH_BY_USER = {
     },
     'LS-99AABB33-000003': {
         'dynamic_score': 55.2, 'health_score': 53, 'fin_score': 58, 'behavior_score': 61,
+        'risk_score':     58.0,
+        'finance_score':  58.0,
+        'asset_score':    48.0,
+        'lifesync_score': 54.8,
+        'vip_prob':         0.32,
+        'signup_prob':      0.51,
+        'rec_prob':         0.64,
+        'next_best_action': '실손 의료보험 가입 검토',
         'breakdown': [
             {'label': '심혈관',   'score': 18, 'max': 35},
             {'label': '활동',     'score': 19, 'max': 35},
@@ -105,6 +183,69 @@ _HEALTH_BY_USER = {
         ],
     },
 }
+
+# ── 등급별 활성 캠페인 배너 (campaign_master 기반) ─────────────────
+MOCK_CAMPAIGNS_BY_GRADE = {
+    'VIP': [
+        {'icon': '👑', 'title': 'VIP 프리미엄 자산관리',
+         'desc': 'PB 예금·WM·VIP 카드·상속 보험 통합 추천',
+         'period': '2026-04-15 ~ 2026-07-15', 'cta': '자산 컨설팅 받기'},
+        {'icon': '🏥', 'title': 'VIP 라이프케어',
+         'desc': '고액자산가 통합 라이프케어 — 금융+건강 동시 관리',
+         'period': '2026-05-01 ~ 2026-07-31', 'cta': '신청하기'},
+        {'icon': '📜', 'title': '상속/절세 설계',
+         'desc': '상속·절세 포트폴리오 무료 컨설팅',
+         'period': '2026-05-10 ~ 2026-08-10', 'cta': '예약하기'},
+    ],
+    'GOLD': [
+        {'icon': '🌐', 'title': '글로벌 투자 캠페인',
+         'desc': 'ETF·펀드·달러자산 우대 수수료',
+         'period': '2026-05-01 ~ 2026-07-31', 'cta': '투자 시작'},
+        {'icon': '✈️', 'title': '프리미엄 카드 혜택',
+         'desc': '여행·마일리지·라운지 이용 한도 2배',
+         'period': '2026-04-20 ~ 2026-06-20', 'cta': '카드 신청'},
+        {'icon': '💪', 'title': '프리미엄 건강보장',
+         'desc': '건강과 금융을 함께 관리하는 우량 고객 캠페인',
+         'period': '2026-05-05 ~ 2026-08-05', 'cta': '상담 받기'},
+    ],
+    'SILVER': [
+        {'icon': '💰', 'title': '생활금융 혜택',
+         'desc': '적금·카드·배당 ETF 통합 혜택',
+         'period': '2026-05-01 ~ 2026-07-31', 'cta': '혜택 보기'},
+        {'icon': '🩺', 'title': '건강보장 시작',
+         'desc': '건강관리와 보장성 상품을 함께 추천',
+         'period': '2026-04-25 ~ 2026-07-25', 'cta': '시작하기'},
+        {'icon': '🎯', 'title': '목적자금 만들기',
+         'desc': '여행·교육·결혼 목적 적금 우대',
+         'period': '2026-05-10 ~ 2026-08-10', 'cta': '플랜 만들기'},
+    ],
+    'BASIC': [
+        {'icon': '🌱', 'title': '금융 시작 캠페인',
+         'desc': '청년 적금·체크카드·간편 보험',
+         'period': '2026-05-01 ~ 2026-07-31', 'cta': '시작하기'},
+        {'icon': '💳', 'title': '생활비 절약',
+         'desc': '캐시백·할인 카드·생활비 절약 적금',
+         'period': '2026-04-20 ~ 2026-06-20', 'cta': '신청'},
+        {'icon': '📱', 'title': '간편보험 시작',
+         'desc': '모바일 3분 가입 간편 보험',
+         'period': '2026-05-10 ~ 2026-08-10', 'cta': '가입하기'},
+    ],
+    'CARE': [
+        {'icon': '🧬', 'title': 'AI 건강관리',
+         'desc': 'AI 리포트·식단·운동 맞춤 추천',
+         'period': '2026-05-01 ~ 2026-07-31', 'cta': '시작하기'},
+        {'icon': '🌿', 'title': '웰니스 보험연계',
+         'desc': '건강관리 이력 기반 보험 우대',
+         'period': '2026-04-25 ~ 2026-07-25', 'cta': '추천 받기'},
+        {'icon': '💬', 'title': '비대면 건강상담',
+         'desc': '화상진료·건강상담 서비스 무료 1회',
+         'period': '2026-05-10 ~ 2026-08-10', 'cta': '예약'},
+    ],
+}
+
+def get_mock_campaigns(grade):
+    return MOCK_CAMPAIGNS_BY_GRADE.get(grade, MOCK_CAMPAIGNS_BY_GRADE['BASIC'])
+
 
 _DEFAULT_UID = 'LS-AABBCC11-000001'
 
