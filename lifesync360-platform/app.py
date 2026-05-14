@@ -476,7 +476,14 @@ def api_my_products():
 
 @app.route('/health')
 def health():
-    return {'status': 'ok'}
+    return {
+        'status': 'ok',
+        'jwt_from_env': bool(os.environ.get('JWT_SECRET')),
+        'jwt_len':      len(JWT_SECRET),
+        'jwt_prefix':   JWT_SECRET[:8],
+        'use_mock':     USE_MOCK,
+        'dynamo_table': os.environ.get('DYNAMO_TABLE', 'NOT_SET'),
+    }
 
 
 @app.route('/api/dashboard')
