@@ -1,5 +1,6 @@
 import os
 import datetime
+import hashlib
 import uuid
 import json as _json
 from datetime import timezone
@@ -7,19 +8,18 @@ import jwt
 import redis
 import boto3
 from flask import Flask, render_template, request, redirect, url_for, jsonify
-from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-JWT_SECRET          = os.environ['JWT_SECRET']
-# USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() == 'true'
-USE_MOCK            = os.environ.get('USE_MOCK', 'false').lower() == 'false'  # 실제 배포에서는 MOCK 사용 안함
-PROFILE_SYNC_LAMBDA = os.environ.get('PROFILE_SYNC_LAMBDA', '')
-AWS_REGION          = os.environ.get('AWS_REGION', 'ap-northeast-2')
+JWT_SECRET          = os.environ.get('JWT_SECRET', 'dev-jwt-secret-lifesync360-32bytes!!')  
+USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() == 'true'
+# USE_MOCK            = os.environ.get('USE_MOCK', 'false').lower() == 'false'  # 실제 배포에서는 MOCK 사용 안함
+PROFILE_SYNC_LAMBDA  = os.environ.get('PROFILE_SYNC_LAMBDA', '')
+ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
+AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 
 if USE_MOCK:
     from mock_data import (
-        MOCK_USERS, MOCK_POINTS, MOCK_POINT_HISTORY,
-        MOCK_RECOMMENDATIONS, PRODUCTS_MAP, get_mock_health,
+        MOCK_USERS, MOCK_RECOMMENDATIONS, PRODUCTS_MAP, get_mock_health,
         get_mock_upgrade_actions, MOCK_MY_PRODUCTS, MOCK_CONSENTED_KEYS,
     )
 
@@ -42,7 +42,6 @@ CONSENTS = [
     {'key': 'WEARABLE',   'label': '웨어러블 동의'},
 ]
 
-# Service-DB 등급 체계: VIP > GOLD > SILVER > BASIC, CARE는 건강 특화
 GRADE_SCORE_MAP = {
     'VIP':    90,
     'GOLD':   80,
@@ -51,6 +50,7 @@ GRADE_SCORE_MAP = {
     'CARE':    0,
 }
 
+# Service-DB 등급 체계: VIP > GOLD > SILVER > BASIC, CARE는 건강 특화
 GRADE_BENEFITS = {
     'VIP': {'color': 'platinum', 'desc': '최상위 고객 전용 혜택', 'benefits': [
         '보험료 최대 15% 할인', '포인트 3배 적립', 'PB 전담 매니저 배정',
@@ -103,16 +103,21 @@ def get_db():
         cursorclass=pymysql.cursors.DictCursor,
     )
 
-def get_auth_db():
-    """인증 DB (users / consent) 연결 — 온프레미스 또는 별도 Aurora DB"""
-    import pymysql
-    return pymysql.connect(
-        host=os.environ['AUTH_DB_HOST'],
-        user=os.environ['AUTH_DB_USER'],
-        password=os.environ['AUTH_DB_PASS'],
-        database=os.environ['AUTH_DB_NAME'],
-        cursorclass=pymysql.cursors.DictCursor,
+def _call_onprem(action, **kwargs):
+    """온프레미스 조회 Lambda 호출 — Control Node 경유"""
+    if not ONPREM_QUERY_LAMBDA:
+        raise RuntimeError('ONPREM_QUERY_LAMBDA 환경변수 미설정')
+    resp   = _get_lambda().invoke(
+        FunctionName=ONPREM_QUERY_LAMBDA,
+        InvocationType='RequestResponse',
+        Payload=_json.dumps({'action': action, **kwargs}),
     )
+    result = _json.loads(resp['Payload'].read())
+    status = result.get('statusCode', 200)
+    body   = _json.loads(result['body']) if isinstance(result.get('body'), str) else result
+    if status not in (200,):
+        raise ValueError(body.get('error') or body.get('detail') or '온프레미스 오류')
+    return body
 
 
 # ── Lambda 호출 ───────────────────────────────────────
@@ -135,7 +140,7 @@ def _resolve_global_id(ls_user_id, email):
         )
         result = _json.loads(resp['Payload'].read())
         if result.get('statusCode') == 200:
-            return _json.loads(result['body'])['global_customer_id']
+            return _json.loads(result['body'])['global_id']
     except Exception:
         pass
     return None
@@ -171,25 +176,22 @@ def api_register():
     if len(password) < 8:
         return jsonify({'error': '비밀번호는 8자 이상이어야 합니다.'}), 400
 
-    db = get_auth_db()
+    ls_user_id = f"LS-{datetime.datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    global_id  = f"G-{uuid.uuid4().hex[:12].upper()}"
     try:
-        with db.cursor() as cur:
-            ls_user_id = f"LS-{datetime.datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
-            global_id  = f"G-{uuid.uuid4().hex[:12].upper()}"
-
-            cur.execute(
-                'INSERT INTO master_customer (global_customer_id) VALUES (%s)',
-                (global_id,)
-            )
-            cur.execute(
-                'INSERT INTO users (ls_user_id, global_customer_id, login_email, password_hash) VALUES (%s, %s, %s, %s)',
-                (ls_user_id, global_id, data['email'], generate_password_hash(data['password']))
-            )
-            db.commit()
-        token = make_jwt(ls_user_id, global_id)
-        return jsonify({'token': token, 'ls_user_id': ls_user_id})
-    finally:
-        db.close()
+        _call_onprem('register',
+            ls_user_id=ls_user_id,
+            global_id=global_id,
+            email=data['email'],
+            password_hash=hashlib.sha256(data['password'].encode('utf-8')).hexdigest(),
+            name=name,
+            mobile=(data.get('phone') or '').strip() or None,
+            rrn=(data.get('rrn') or '').strip() or None,
+        )
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    token = make_jwt(ls_user_id, global_id)
+    return jsonify({'token': token, 'ls_user_id': ls_user_id})
 
 
 @app.route('/api/login', methods=['POST'])
@@ -200,24 +202,17 @@ def api_login():
 
     if USE_MOCK:
         user = MOCK_USERS.get(email)
-        if not user or not check_password_hash(user['password_hash'], password):
+        if not user or hashlib.sha256(password.encode('utf-8')).hexdigest() != user['password_hash']:
             return jsonify({'error': '이메일 또는 비밀번호가 올바르지 않습니다.'}), 401
         token = make_jwt(user['ls_user_id'], user['global_id'])
         return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
 
-    db = get_auth_db()
     try:
-        with db.cursor() as cur:
-            cur.execute('SELECT * FROM users WHERE login_email = %s', (email,))
-            user = cur.fetchone()
-    finally:
-        db.close()
-
-    if not user or not check_password_hash(user['password_hash'], password):
+        user  = _call_onprem('login', email=email, password=password)
+    except ValueError:
         return jsonify({'error': '이메일 또는 비밀번호가 올바르지 않습니다.'}), 401
 
-    global_customer_id = user.get('global_customer_id') or _resolve_global_id(user['ls_user_id'], email)
-    token = make_jwt(user['ls_user_id'], global_customer_id or user['ls_user_id'])
+    token = make_jwt(user['ls_user_id'], user['global_id'])
     return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
 
 
@@ -240,25 +235,44 @@ def api_me():
                 'email':      user['email'],
             })
 
-        db = get_auth_db()
         try:
-            with db.cursor() as cur:
-                cur.execute(
-                    'SELECT login_email, global_customer_id FROM users WHERE ls_user_id = %s',
-                    (payload['sub'],)
-                )
-                user = cur.fetchone()
-        finally:
-            db.close()
-
-        if not user:
+            user = _call_onprem('get_user', ls_user_id=payload['sub'])
+        except ValueError:
             return jsonify({'error': 'user not found'}), 404
+
+        global_id = user.get('global_id', payload['gid'])
+
+        grade = None
+        try:
+            item  = get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item', {})
+            grade = item.get('dynamic_grade')
+        except Exception:
+            pass
+
+        onprem = None
+        try:
+            onprem = _call_onprem('get_all', global_id=global_id)
+        except Exception:
+            pass
+
+        consents = onprem.get('consents', []) if onprem else []
+        profile  = ((onprem or {}).get('customer') or {}).get('profile') or {}
+
+        name = None
+        try:
+            pii  = _call_onprem('get_pii', global_id=global_id)
+            name = pii.get('name')
+        except Exception:
+            pass
+
         return jsonify({
             'ls_user_id': payload['sub'],
-            'global_id':  user.get('global_customer_id', payload['gid']),
-            'name':       None,
-            'grade':      None,
+            'global_id':  global_id,
+            'name':       name,
+            'grade':      grade,
             'email':      user['login_email'],
+            'consents':   consents,
+            'profile':    profile,
         })
 
     except jwt.ExpiredSignatureError:
@@ -280,20 +294,10 @@ def api_consent():
         return jsonify({'error': 'invalid token'}), 401
 
     consents = request.get_json().get('consents', [])
-    all_keys = [c['key'] for c in CONSENTS]
-    db = get_auth_db()
     try:
-        with db.cursor() as cur:
-            for key in all_keys:
-                cur.execute(
-                    '''INSERT INTO consent (global_customer_id, domain, consent_flag)
-                       VALUES (%s, %s, %s)
-                       ON DUPLICATE KEY UPDATE consent_flag = VALUES(consent_flag)''',
-                    (payload['gid'], key, 'Y' if key in consents else 'N')
-                )
-            db.commit()
-    finally:
-        db.close()
+        _call_onprem('save_consent', global_id=payload['gid'], consents=consents)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 500
     return jsonify({'status': 'ok'})
 
 
@@ -353,7 +357,7 @@ def api_recommendations():
     grade         = 'BASIC'
     dynamic_score = None
     try:
-        item = get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item', {})
+        item          = get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item', {})
         grade         = item.get('dynamic_grade', 'BASIC')
         dynamic_score = float(item['dynamic_score']) if item.get('dynamic_score') else None
     except Exception:
@@ -449,6 +453,15 @@ def api_my_products():
     global_id   = payload['gid']
     company_key = request.args.get('company', '')
 
+    if company_key:
+        try:
+            consent_data = _call_onprem('get_consent', global_id=global_id)
+        except ValueError:
+            return jsonify({'error': 'consent_check_failed'}), 500
+        consents = {c['domain']: c.get('consent_flag') for c in consent_data.get('consents', [])}
+        if consents.get(company_key) != 'Y':
+            return jsonify({'error': 'consent_required'}), 403
+
     db = get_db()
     try:
         with db.cursor() as cur:
@@ -521,18 +534,9 @@ def api_dashboard():
 # ── 페이지 ────────────────────────────────────────────
 @app.route('/settings')
 def settings():
-    if USE_MOCK:
-        points        = MOCK_POINTS
-        point_history = MOCK_POINT_HISTORY
-    else:
-        points        = {'balance': 0, 'next_grade': '-', 'next_grade_points': 0, 'next_grade_percent': 0}
-        point_history = []
-
     return render_template('settings.html',
         grade_benefits=GRADE_BENEFITS,
         consents=CONSENTS,
-        points=points,
-        point_history=point_history,
     )
 
 

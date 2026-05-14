@@ -1,7 +1,9 @@
+import hashlib
 import json
 from pathlib import Path
-from werkzeug.security import generate_password_hash
 from upgrade_actions_engine import get_personalized_actions
+
+_PW_HASH = hashlib.sha256('password123'.encode('utf-8')).hexdigest()
 
 _PRODUCTS_DIR = Path(__file__).parent.parent / 'data' / 'products'
 
@@ -12,7 +14,7 @@ MOCK_USERS = {
         'global_id':     'G000000001',
         'name':          '김철수',
         'email':         'test@lifesync.com',
-        'password_hash': generate_password_hash('password123'),
+        'password_hash': _PW_HASH,
         'grade':         'PLATINUM',
     },
     'test2@lifesync.com': {
@@ -20,7 +22,7 @@ MOCK_USERS = {
         'global_id':     'G000000002',
         'name':          '이수진',
         'email':         'test2@lifesync.com',
-        'password_hash': generate_password_hash('password123'),
+        'password_hash': _PW_HASH,
         'grade':         'GOLD',
     },
     'test3@lifesync.com': {
@@ -28,7 +30,7 @@ MOCK_USERS = {
         'global_id':     'G000000003',
         'name':          '박지훈',
         'email':         'test3@lifesync.com',
-        'password_hash': generate_password_hash('password123'),
+        'password_hash': _PW_HASH,
         'grade':         'SILVER',
     },
 }
