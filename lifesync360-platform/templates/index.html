@@ -142,9 +142,10 @@
 
         if (!meRes.ok) { window.location.href = '/login'; return; }
         const user = await meRes.json();
-        document.getElementById('grade-badge').textContent = user.grade;
-        document.getElementById('grade-badge').className = `grade-badge grade-${user.grade.toLowerCase()}`;
-        document.getElementById('header-username').textContent = user.name;
+        const _grade = user.grade || 'BASIC';
+        document.getElementById('grade-badge').textContent = _grade;
+        document.getElementById('grade-badge').className = `grade-badge grade-${_grade.toLowerCase()}`;
+        document.getElementById('header-username').textContent = user.name || '-';
 
         if (dashRes.ok) {
             const scores = await dashRes.json();
