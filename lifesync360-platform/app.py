@@ -12,19 +12,16 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify
 app = Flask(__name__)
 JWT_SECRET          = os.environ.get('JWT_SECRET', 'dev-jwt-secret-lifesync360-32bytes!!')
 # USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() == 'true'
-USE_MOCK            = False  # Cloud 데이터 모드 강제 (Mock 부활: True 변경 + 아래 import 복원)
+USE_MOCK            = True  # 시연용 Mock 강제 (mock_data의 global_id로 DynamoDB 실데이터 조회)
 PROFILE_SYNC_LAMBDA  = os.environ.get('PROFILE_SYNC_LAMBDA', '')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 
-# if USE_MOCK:
-#     from mock_data import (
-#         MOCK_USERS, MOCK_RECOMMENDATIONS, PRODUCTS_MAP, get_mock_health,
-#         get_mock_upgrade_actions, MOCK_MY_PRODUCTS, MOCK_CONSENTED_KEYS,
-#     )
-
-# 임시: Lambda 미배포 검증용 — 인증만 Mock 사용 (다른 라우트는 비Mock 그대로)
-from mock_data import MOCK_USERS
+if USE_MOCK:
+    from mock_data import (
+        MOCK_USERS, MOCK_RECOMMENDATIONS, PRODUCTS_MAP, get_mock_health,
+        get_mock_upgrade_actions, MOCK_MY_PRODUCTS, MOCK_CONSENTED_KEYS,
+    )
 
 COMPANIES = [
     {'key': 'BANK',       'name': 'LS 은행'},
