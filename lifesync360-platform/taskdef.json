@@ -25,7 +25,12 @@
         { "name": "PROFILE_SYNC_LAMBDA",  "value": "customer-profile-sync" },
         { "name": "ONPREM_QUERY_LAMBDA",  "value": "lifesync-onprem-customer-query" }
       ],
-      "secrets": [],
+      "secrets": [
+        {
+          "name": "JWT_SECRET",
+          "valueFrom": "arn:aws:ssm:ap-northeast-2:354493396671:parameter/lifesync360/jwt-secret"
+        }
+      ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
