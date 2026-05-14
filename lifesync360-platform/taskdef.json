@@ -25,28 +25,7 @@
         { "name": "PROFILE_SYNC_LAMBDA",  "value": "customer-profile-sync" },
         { "name": "ONPREM_QUERY_LAMBDA",  "value": "lifesync-onprem-customer-query" }
       ],
-      "secrets": [
-        {
-          "name": "AURORA_HOST",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/aurora:host::"
-        },
-        {
-          "name": "DB_USER",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/aurora:user::"
-        },
-        {
-          "name": "DB_PASS",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/aurora:password::"
-        },
-        {
-          "name": "JWT_SECRET",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/jwt:secret::"
-        },
-        {
-          "name": "REDIS_HOST",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/redis:host::"
-        }
-      ],
+      "secrets": [],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
