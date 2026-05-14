@@ -86,7 +86,7 @@
                         <tr>
                             <td>
                                 {% if matched_user %}
-                                <a class="table-link" href="{{ url_for('user_detail', ls_user_id=matched_user.ls_user_id) }}">
+                                <a class="table-link" href="{{ url_for('user_detail', global_id=matched_user.global_id) }}">
                                     <strong>{{ matched_user.name }}</strong>
                                 </a>
                                 <div class="mono" style="margin-top:2px;">{{ item.global_id }}</div>
@@ -132,7 +132,7 @@
                             <td>
                                 <span class="badge badge-{{ c.target_grade | lower }}">{{ c.target_grade }}</span>
                             </td>
-                            <td class="mono">{{ c.start_dt }} ~ {{ c.end_dt }}</td>
+                            <td class="mono">{{ c.start_date }} ~ {{ c.end_date }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -165,9 +165,9 @@
                             <td><strong>{{ r.name }}</strong></td>
                             <td>{{ r.product_name }}</td>
                             <td>
-                                {% if r.purchased_at %}
+                                {% if r.purchased_flag == 'Y' %}
                                 <span class="badge badge-purchased">구매완료</span>
-                                {% elif r.clicked_at %}
+                                {% elif r.clicked_flag == 'Y' %}
                                 <span class="badge badge-clicked">클릭</span>
                                 {% else %}
                                 <span class="badge badge-recommended">추천됨</span>

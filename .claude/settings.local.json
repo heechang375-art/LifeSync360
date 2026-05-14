@@ -72,7 +72,12 @@
       "Bash(unzip -l Service-DB-20260512T102040Z-3-001.zip)",
       "Bash(unzip -o Initial-Data-20260512T101305Z-3-001.zip -d .tmp_extract/)",
       "Bash(unzip -o Service-DB-20260512T102040Z-3-001.zip -d .tmp_extract/)",
-      "Bash(powershell -Command \"Compress-Archive -Path 'app.py','mock_data.py' -DestinationPath 'mock_backup.zip' -Force\")"
+      "Bash(powershell -Command \"Compress-Archive -Path 'app.py','mock_data.py' -DestinationPath 'mock_backup.zip' -Force\")",
+      "Bash(git -C C:/users/campus3S026/ls status --short)",
+      "Bash(git -C C:/users/campus3S026/ls/onprem-prod-repo status --short)",
+      "Bash(git -C C:/users/campus3S026/ls log --oneline -5)",
+      "Bash(git -C C:/users/campus3S026/ls/onprem-prod-repo log --oneline -5)",
+      "Bash(git *)"
     ]
   }
 }

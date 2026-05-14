@@ -8,18 +8,23 @@ from flask import Flask, render_template, request, redirect, url_for, session
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'admin-dev-secret-32bytes-lifesync!!')  # TODO: 운영 배포 시 env var로 교체
 
-USE_MOCK        = os.environ.get('USE_MOCK', 'true').lower() == 'true'
-ADMIN_USER      = os.environ.get('ADMIN_USER', 'admin')
-ADMIN_PASS      = os.environ.get('ADMIN_PASSWORD', 'admin1234')  # TODO: 운영 배포 시 env var로 교체
-DYNAMO_TABLE    = os.environ.get('DYNAMO_TABLE', 'lifesync-scores')
-AWS_REGION      = os.environ.get('AWS_REGION', 'ap-northeast-2')
-PRIVATE_API_URL = os.environ.get('PRIVATE_API_URL', '')
+USE_MOCK             = os.environ.get('USE_MOCK', 'true').lower() == 'true'
+ADMIN_USER           = os.environ.get('ADMIN_USER', 'admin')
+ADMIN_PASS           = os.environ.get('ADMIN_PASSWORD', 'admin1234')  # TODO: 운영 배포 시 env var로 교체
+DYNAMO_TABLE         = os.environ.get('DYNAMO_TABLE', 'lifesync-scores')
+AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
+PRIVATE_API_URL      = os.environ.get('PRIVATE_API_URL', '')
+ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
 
-GRADES = ['PLATINUM', 'GOLD', 'SILVER', 'BRONZE', 'BASIC']
+GRADES = ['VIP', 'GOLD', 'SILVER', 'BASIC', 'CARE']
 CONSENT_LABELS = {
-    'bank': '은행', 'card': '카드', 'insurance': '보험',
-    'internet_insurance': '인터넷보험', 'securities': '증권',
-    'healthcare': '헬스케어', 'hospital': '병원',
+    'BANK':       '은행',
+    'CARD':       '카드',
+    'INSURANCE':  '보험',
+    'SECURITIES': '증권',
+    'HEALTHCARE': '헬스케어',
+    'HOSPITAL':   '병원',
+    'WEARABLE':   '웨어러블',
 }
 
 if USE_MOCK:
@@ -38,18 +43,44 @@ def get_db():
         host=os.environ['AURORA_HOST'],
         user=os.environ['DB_USER'],
         password=os.environ['DB_PASS'],
-        database=os.environ.get('DB_NAME', 'lifesync'),
+        database=os.environ.get('DB_NAME', 'lifesync360'),
         cursorclass=pymysql.cursors.DictCursor,
     )
 
 
-_dynamo = None
+_dynamo        = None
+_lambda_client = None
+
 
 def get_dynamo_table():
     global _dynamo
     if _dynamo is None:
         _dynamo = boto3.resource('dynamodb', region_name=AWS_REGION)
     return _dynamo.Table(DYNAMO_TABLE)
+
+
+def _get_lambda():
+    global _lambda_client
+    if _lambda_client is None:
+        import json as _j
+        _lambda_client = boto3.client('lambda', region_name=AWS_REGION)
+    return _lambda_client
+
+
+def _call_onprem(action, **kwargs):
+    if not ONPREM_QUERY_LAMBDA:
+        return {}
+    import json as _j
+    resp   = _get_lambda().invoke(
+        FunctionName=ONPREM_QUERY_LAMBDA,
+        InvocationType='RequestResponse',
+        Payload=_j.dumps({'action': action, **kwargs}),
+    )
+    result = _j.loads(resp['Payload'].read())
+    if result.get('statusCode') != 200:
+        return {}
+    body = result.get('body', '{}')
+    return _j.loads(body) if isinstance(body, str) else body
 
 
 def _add_rates(funnel_rows):
@@ -132,7 +163,7 @@ def overview():
 
         all_consents = [c for v in MOCK_CONSENTS.values() for c in v]
         consent_rate = round(
-            sum(1 for c in all_consents if c['consent_yn'] == 'Y') / len(all_consents) * 100, 1
+            sum(1 for c in all_consents if c['consent_flag'] == 'Y') / len(all_consents) * 100, 1
         ) if all_consents else 0
         active_campaigns = MOCK_CAMPAIGNS
         user_map = {u['global_id']: u for u in MOCK_USERS}
@@ -144,74 +175,74 @@ def overview():
         top_viewed     = MOCK_TOP_VIEWED
         tab_clicks     = MOCK_TAB_CLICKS
     else:
+        # ① Aurora — 캠페인·추천이력·퍼널·대시보드 로그
         db = get_db()
         try:
             with db.cursor() as cur:
-                cur.execute('SELECT COUNT(*) as cnt FROM users')
-                total_users = cur.fetchone()['cnt']
-                cur.execute('SELECT grade, COUNT(*) as cnt FROM users GROUP BY grade')
-                grade_dist = {g: 0 for g in GRADES}
-                for row in cur.fetchall():
-                    grade_dist[row['grade']] = row['cnt']
                 cur.execute(
-                    'SELECT COUNT(*) as total, SUM(consent_yn = "Y") as agreed FROM consent'
-                )
-                crow = cur.fetchone()
-                consent_rate = round(crow['agreed'] / crow['total'] * 100, 1) if crow['total'] else 0
-                cur.execute(
-                    'SELECT campaign_id, campaign_name, target_grade, start_dt, end_dt '
-                    'FROM campaign_master WHERE end_dt >= CURDATE() ORDER BY start_dt DESC LIMIT 10'
+                    'SELECT campaign_id, campaign_name, target_grade, start_date, end_date '
+                    'FROM campaign_master WHERE end_date >= CURDATE() ORDER BY start_date DESC LIMIT 10'
                 )
                 active_campaigns = cur.fetchall()
+
                 cur.execute(
-                    'SELECT r.global_id, r.product_name, r.recommended_at, r.clicked_at, r.purchased_at, u.name '
-                    'FROM customer_recommend_history r JOIN users u ON r.global_id = u.global_id '
+                    'SELECT r.global_id, p.product_name, r.recommended_at, '
+                    '       r.clicked_flag, r.purchased_flag '
+                    'FROM customer_recommend_history r '
+                    'JOIN product_master p ON r.product_id = p.product_id '
                     'ORDER BY r.recommended_at DESC LIMIT 5'
                 )
                 recent_recommends = cur.fetchall()
+
                 cur.execute(
-                    'SELECT product_name, affiliate_id as affiliate, COUNT(*) as recommended, '
-                    'SUM(clicked_at IS NOT NULL) as clicked, '
-                    'SUM(purchased_at IS NOT NULL) as purchased '
-                    'FROM customer_recommend_history '
-                    'GROUP BY product_name, affiliate_id ORDER BY purchased DESC LIMIT 10'
+                    'SELECT p.product_name, c.company_name as affiliate, '
+                    '       COUNT(*) as recommended, '
+                    '       SUM(r.clicked_flag = "Y") as clicked, '
+                    '       SUM(r.purchased_flag = "Y") as purchased '
+                    'FROM customer_recommend_history r '
+                    'JOIN product_master p ON r.product_id = p.product_id '
+                    'JOIN company_master c ON p.company_id = c.company_id '
+                    'GROUP BY p.product_id, p.product_name, c.company_name '
+                    'ORDER BY purchased DESC LIMIT 10'
                 )
                 product_funnel = _add_rates(list(cur.fetchall()))
+
                 cur.execute(
-                    'SELECT event_target, COUNT(*) as count '
-                    'FROM customer_event_log WHERE event_type = %s '
-                    'GROUP BY event_target ORDER BY count DESC LIMIT 5',
-                    ('product_view',)
+                    'SELECT p.product_name as event_target, COUNT(*) as count '
+                    'FROM customer_dashboard_log d '
+                    'JOIN product_master p ON d.click_product_id = p.product_id '
+                    'WHERE d.product_click = "Y" '
+                    'GROUP BY p.product_id, p.product_name ORDER BY count DESC LIMIT 5'
                 )
                 top_viewed = cur.fetchall()
+
                 cur.execute(
-                    'SELECT event_target, COUNT(*) as count '
-                    'FROM customer_event_log WHERE event_type = %s '
-                    'GROUP BY event_target ORDER BY count DESC',
-                    ('tab_click',)
+                    'SELECT page_type as event_target, COUNT(*) as count '
+                    'FROM customer_dashboard_log GROUP BY page_type ORDER BY count DESC'
                 )
                 tab_clicks = cur.fetchall()
         finally:
             db.close()
 
-        result    = get_dynamo_table().scan(ProjectionExpression='global_id, dynamic_score, dynamic_grade, update_time')
+        # ② DynamoDB — 등급 분포·점수 통계 (온프레미스 users 불필요)
+        result    = get_dynamo_table().scan(
+            ProjectionExpression='global_id, dynamic_score, dynamic_grade, update_time'
+        )
         items     = result.get('Items', [])
         analyzed  = len(items)
         avg_score = round(sum(float(i.get('dynamic_score', 0)) for i in items) / analyzed, 1) if analyzed else 0
         recent    = sorted(items, key=lambda x: x.get('update_time', ''), reverse=True)[:5]
 
-        recent_global_ids = [i['global_id'] for i in recent]
-        db2 = get_db()
-        try:
-            with db2.cursor() as cur:
-                placeholders = ','.join(['%s'] * len(recent_global_ids))
-                cur.execute(
-                    f'SELECT ls_user_id, global_id, name FROM users WHERE global_id IN ({placeholders})',
-                    recent_global_ids
-                )
-                recent_users = {row['global_id']: row for row in cur.fetchall()}
-        finally:
-            db2.close()
+        grade_dist = {g: 0 for g in GRADES}
+        for item in items:
+            g = item.get('dynamic_grade', 'BASIC')
+            if g in grade_dist:
+                grade_dist[g] += 1
+
+        # total_users: Aurora users_ref 동기화 전까지 DynamoDB 분석 건수로 대체
+        total_users  = analyzed
+        consent_rate = 0  # Aurora users_ref 동기화 후 구현
+        recent_users = {i['global_id']: {'global_id': i['global_id'], 'ls_user_id': i['global_id']} for i in recent}
 
     return render_template('overview.html',
         total_users=total_users,
@@ -250,26 +281,29 @@ def users():
         total     = len(filtered)
         user_list = filtered[offset:offset + per_page]
     else:
-        db = get_db()
-        try:
-            with db.cursor() as cur:
-                wheres, params = [], []
-                if q:
-                    wheres.append('(name LIKE %s OR email LIKE %s)')
-                    params += [f'%{q}%', f'%{q}%']
-                if grade_filter:
-                    wheres.append('grade = %s')
-                    params.append(grade_filter)
-                where = ('WHERE ' + ' AND '.join(wheres)) if wheres else ''
-                cur.execute(f'SELECT COUNT(*) as cnt FROM users {where}', params)
-                total = cur.fetchone()['cnt']
-                cur.execute(
-                    f'SELECT ls_user_id, global_id, name, email, grade FROM users {where} ORDER BY ls_user_id DESC LIMIT %s OFFSET %s',
-                    params + [per_page, offset]
-                )
-                user_list = cur.fetchall()
-        finally:
-            db.close()
+        # DynamoDB 기반 목록 — Aurora users_ref 동기화 전 임시
+        result = get_dynamo_table().scan(
+            ProjectionExpression='global_id, dynamic_score, dynamic_grade, update_time'
+        )
+        items = result.get('Items', [])
+
+        if grade_filter:
+            items = [i for i in items if i.get('dynamic_grade') == grade_filter]
+        if q:
+            items = [i for i in items if q.lower() in i.get('global_id', '').lower()]
+
+        total = len(items)
+        items.sort(key=lambda x: x.get('update_time', ''), reverse=True)
+        user_list = [
+            {
+                'global_id':  i['global_id'],
+                'ls_user_id': '-',
+                'name':       '-',
+                'email':      '-',
+                'grade':      i.get('dynamic_grade', '-'),
+            }
+            for i in items[offset:offset + per_page]
+        ]
 
     return render_template('users.html',
         users=user_list,
@@ -283,44 +317,52 @@ def users():
 
 
 # ── User Detail ───────────────────────────────────────
-@app.route('/users/<ls_user_id>')
+@app.route('/users/<global_id>')
 @login_required
-def user_detail(ls_user_id):
+def user_detail(global_id):
     if USE_MOCK:
-        user = next((u for u in MOCK_USERS if u['ls_user_id'] == ls_user_id), None)
+        user = next((u for u in MOCK_USERS if u['global_id'] == global_id), None)
         if not user:
             return redirect(url_for('users'))
-        scores            = MOCK_SCORES.get(user['global_id'])
-        consents          = MOCK_CONSENTS.get(user['global_id'], [])
-        recommend_history = MOCK_RECOMMEND_HISTORY.get(user['global_id'], [])
-        identities        = MOCK_IDENTITIES.get(user['global_id'], [])
+        scores            = MOCK_SCORES.get(global_id)
+        consents          = MOCK_CONSENTS.get(global_id, [])
+        recommend_history = MOCK_RECOMMEND_HISTORY.get(global_id, [])
+        identities        = MOCK_IDENTITIES.get(global_id, [])
     else:
+        # ① DynamoDB — 등급·점수
+        result = get_dynamo_table().get_item(Key={'global_id': global_id})
+        scores = result.get('Item')
+
+        # ② 온프레미스 Lambda — 동의 현황 (개별 조회는 Lambda 경유 허용)
+        consent_data = _call_onprem('get_consent', global_id=global_id)
+        consents     = consent_data.get('consents', [])
+
+        # ③ Aurora — 추천 이력
         db = get_db()
         try:
             with db.cursor() as cur:
                 cur.execute(
-                    'SELECT ls_user_id, global_id, name, email, grade FROM users WHERE ls_user_id = %s',
-                    (ls_user_id,)
-                )
-                user = cur.fetchone()
-                if not user:
-                    return redirect(url_for('users'))
-                cur.execute(
-                    'SELECT consent_key, consent_yn, updated_at FROM consent WHERE global_id = %s',
-                    (user['global_id'],)
-                )
-                consents = cur.fetchall()
-                cur.execute(
-                    'SELECT product_name, recommended_at, clicked_at, purchased_at '
-                    'FROM customer_recommend_history WHERE global_id = %s ORDER BY recommended_at DESC',
-                    (user['global_id'],)
+                    'SELECT p.product_name, r.recommended_at, r.clicked_flag, r.purchased_flag '
+                    'FROM customer_recommend_history r '
+                    'JOIN product_master p ON r.product_id = p.product_id '
+                    'WHERE r.global_id = %s ORDER BY r.recommended_at DESC',
+                    (global_id,)
                 )
                 recommend_history = cur.fetchall()
         finally:
             db.close()
-        result     = get_dynamo_table().get_item(Key={'global_id': user['global_id']})
-        scores     = result.get('Item')
-        identities = _get_identities(user['global_id'])
+
+        # ④ Private API — 제휴사 매핑
+        identities = _get_identities(global_id)
+
+        # 기본 유저 정보: Aurora users_ref 동기화 전까지 available 필드만 표시
+        user = {
+            'global_id':  global_id,
+            'ls_user_id': '-',
+            'name':       '-',
+            'email':      '-',
+            'grade':      scores.get('dynamic_grade', '-') if scores else '-',
+        }
 
     return render_template('user_detail.html',
         user=user,

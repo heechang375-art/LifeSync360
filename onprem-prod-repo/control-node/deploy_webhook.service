@@ -10,6 +10,7 @@ ExecStart=/opt/deploy-webhook/venv/bin/uvicorn deploy_webhook:app --host 0.0.0.0
 Restart=always
 RestartSec=5
 Environment=CODECOMMIT_URL=https://git-codecommit.ap-northeast-2.amazonaws.com/v1/repos/onprem-prod-repo
+Environment=PRIVATE_API_URL=http://172.16.1.73
 # DEPLOY_TOKEN은 /etc/systemd/system/deploy_webhook.service.d/override.conf 에 별도 설정
 # [Service]
 # Environment=DEPLOY_TOKEN=<토큰값>

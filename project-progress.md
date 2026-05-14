@@ -26,6 +26,8 @@
 | customer_profile_sync — on-prem 연결 전환 / 컬럼명 수정 | ✅ |
 | consent_filter — 신규 작성 (동의 고객 S3 추출) | ✅ |
 | consent_filter — IaC 배포 (Lambda / SG / IAM / EventBridge) | ⏳ IaC 담당 |
+| onprem_customer_query Lambda — 신규 작성 (Platform VPC 직접 VPN) | ✅ |
+| onprem_customer_query Lambda — IaC 배포 (Platform VPC 서브넷 / SG / 환경변수) | ⏳ IaC 담당 |
 
 ### 플랫폼 / 어드민
 
@@ -34,15 +36,24 @@
 | lifesync360-platform — Mock 전체 기능 | ✅ |
 | lifesync360-platform — Aurora/DynamoDB/Redis 연동 코드 | ✅ (클라우드 배포 전) |
 | lifesync360-platform — 아키텍처 기준 컬럼명 전면 통일 | ✅ |
+| lifesync360-platform — 온프레미스 인증/동의 Lambda 연동 (_call_onprem) | ✅ |
+| lifesync360-platform — 로컬 테스트 JWT 발급 환경 (make_token.py) | ✅ |
+| lifesync360-platform — 포인트 기능 제거 (Aurora 테이블 없음, 화면 미노출) | ✅ |
+| lifesync360-platform — Service-DB 스키마 기준 쿼리 정합성 검증 완료 | ✅ |
 | private_api — 아키텍처 기준 컬럼명/파라미터명 전면 통일 | ✅ |
+| global_customer_id → global_id 전환 (schema.sql 2개 / lambda handler 2개) | ✅ |
 | admin-platform — Mock 전체 기능 | ✅ |
-| admin-platform — Aurora/DynamoDB 연동 코드 | ✅ (클라우드 배포 전) |
+| admin-platform — Mock 데이터 실제 스키마 기준 정합 (domain/consent_flag/clicked_flag 등) | ✅ |
+| admin-platform — Aurora 쿼리 전면 수정 (캠페인/추천이력/퍼널/dashboard log) | ✅ |
+| admin-platform — DynamoDB 기반 등급분포/유저목록 전환 | ✅ |
+| admin-platform — 온프레미스 Lambda 헬퍼 (_call_onprem) 추가 | ✅ |
+| admin-platform — user_detail URL global_id 기반 전환 | ✅ |
 | GitHub → CodeCommit 미러 CI | ✅ |
 | taskdef.json / buildspec.yml / appspec.yaml (platform + admin) | ✅ |
 | /api/me name/grade 연동 (PII 복호화 + DynamoDB grade) | ⏳ |
-| settings 포인트 Aurora 연동 | ⏳ |
 | /api/my-products 운영 연결 | ⏳ |
 | upgrade_actions 운영 연결 | ⏳ |
+| Aurora users_ref 동기화 테이블 설계 및 구축 (어드민 유저목록 이름/이메일 표시) | ⏳ |
 
 ### 클라우드 인프라
 
@@ -872,10 +883,258 @@ ansible all -m ping \
     - Private API 쿼리 파라미터: `company_id` → `domain`
     - 기본값: `DEFAULT_COMPANY='bank'` → `DEFAULT_DOMAIN='BANK'`
 
+- **온프레미스 실서버 마이그레이션 스크립트**
+
+  > `CREATE TABLE IF NOT EXISTS`는 기존 테이블을 변경하지 않음 — Ansible 재배포만으로는 컬럼명이 바뀌지 않는다. 아래 ALTER TABLE 스크립트를 ls-db에서 직접 실행해야 함.
+  > 실행 전 필수 백업: `mysqldump -u root -p lifesync_onprem > /backup/pre_migration_$(date +%Y%m%d).sql`
+
+  ```sql
+  USE lifesync_onprem;
+
+  -- ① users: id→user_id, global_id→global_customer_id, email→login_email, name/grade 제거, 신규 컬럼 추가
+  ALTER TABLE users
+    RENAME COLUMN id TO user_id,
+    RENAME COLUMN global_id TO global_customer_id,
+    RENAME COLUMN email TO login_email,
+    DROP COLUMN name,
+    DROP COLUMN grade,
+    ADD COLUMN mobile VARCHAR(20) NULL,
+    ADD COLUMN user_status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    ADD COLUMN consent_completed CHAR(1) NOT NULL DEFAULT 'N',
+    ADD COLUMN last_login_dt TIMESTAMP NULL;
+
+  -- ② master_customer: global_id→global_customer_id, PII 컬럼 제거(customer_pii_secure로 분리), 신규 컬럼 추가
+  ALTER TABLE master_customer
+    RENAME COLUMN global_id TO global_customer_id,
+    DROP COLUMN representative_name,
+    DROP COLUMN birth_dt,
+    DROP COLUMN gender,
+    DROP COLUMN nationality,
+    ADD COLUMN customer_status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    ADD COLUMN vip_grade VARCHAR(10) NOT NULL DEFAULT 'NORMAL',
+    ADD COLUMN customer_type VARCHAR(20) NOT NULL DEFAULT 'INDIVIDUAL',
+    CHANGE COLUMN created_dt first_created_dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN last_updated_dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+
+  -- ③ consent: global_id→global_customer_id, consent_key→domain, consent_yn→consent_flag, 신규 컬럼 추가
+  ALTER TABLE consent
+    RENAME COLUMN global_id TO global_customer_id,
+    RENAME COLUMN consent_key TO domain,
+    RENAME COLUMN consent_yn TO consent_flag,
+    ADD COLUMN consent_version VARCHAR(10) NOT NULL DEFAULT 'v1.0',
+    ADD COLUMN revoke_dt TIMESTAMP NULL;
+
+  -- ④ customer_identity_map: global_id→global_customer_id, company_id→domain, affiliate_customer_id→source_customer_id
+  ALTER TABLE customer_identity_map
+    RENAME COLUMN global_id TO global_customer_id,
+    RENAME COLUMN company_id TO domain,
+    RENAME COLUMN affiliate_customer_id TO source_customer_id,
+    ADD COLUMN match_type VARCHAR(10) NOT NULL DEFAULT 'EXACT',
+    ADD COLUMN active_flag CHAR(1) NOT NULL DEFAULT 'Y';
+
+  -- ⑤ customer_360_profile: global_id→global_customer_id, grade 제거, 신규 컬럼 추가
+  ALTER TABLE customer_360_profile
+    RENAME COLUMN global_id TO global_customer_id,
+    DROP COLUMN grade,
+    ADD COLUMN gender CHAR(1) NULL,
+    ADD COLUMN age_band VARCHAR(10) NULL,
+    ADD COLUMN region VARCHAR(50) NULL,
+    ADD COLUMN income_grade VARCHAR(10) NULL,
+    ADD COLUMN asset_grade VARCHAR(10) NULL,
+    ADD COLUMN wearable_flag CHAR(1) NOT NULL DEFAULT 'N',
+    ADD COLUMN health_score DECIMAL(5,1) NULL,
+    ADD COLUMN finance_score DECIMAL(5,1) NULL,
+    ADD COLUMN asset_score DECIMAL(5,1) NULL,
+    ADD COLUMN lifesync_score DECIMAL(5,1) NULL;
+
+  -- ⑥ token_map: global_id→global_customer_id
+  ALTER TABLE token_map
+    RENAME COLUMN global_id TO global_customer_id;
+
+  -- ⑦ consent 도메인값 마이그레이션 (구 값 → 신 값)
+  UPDATE consent SET domain = 'INSURANCE'  WHERE domain = 'INS';
+  UPDATE consent SET domain = 'SECURITIES' WHERE domain = 'SEC';
+  UPDATE consent SET domain = 'HEALTHCARE' WHERE domain = 'HLT';
+  UPDATE consent SET domain = 'WEARABLE'   WHERE domain = 'wearable';
+  DELETE FROM consent WHERE domain = 'ONINS';
+
+  -- ⑧ customer_identity_map 도메인값 마이그레이션
+  UPDATE customer_identity_map SET domain = 'INSURANCE'  WHERE domain = 'INS';
+  UPDATE customer_identity_map SET domain = 'SECURITIES' WHERE domain = 'SEC';
+  UPDATE customer_identity_map SET domain = 'HEALTHCARE' WHERE domain = 'HLT';
+  UPDATE customer_identity_map SET domain = 'WEARABLE'   WHERE domain = 'wearable';
+
+  -- ⑨ customer_pii_secure: 구 구조(pii_type/encrypted_val)에서 필드별 컬럼 구조로 재설계
+  --    기존 데이터가 없다면 DROP 후 schema.sql 재적용, 있다면 별도 마이그레이션 스크립트 필요
+  DROP TABLE IF EXISTS customer_pii_secure;
+  CREATE TABLE customer_pii_secure (
+      pii_token            VARCHAR(36)  NOT NULL PRIMARY KEY,
+      global_customer_id   VARCHAR(30)  NOT NULL,
+      customer_name_enc    TEXT,
+      ssn_enc              TEXT,
+      mobile_enc           TEXT,
+      email_enc            TEXT,
+      address_enc          TEXT,
+      created_dt           TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+      updated_dt           TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_global (global_customer_id),
+      CONSTRAINT fk_pii_customer FOREIGN KEY (global_customer_id)
+          REFERENCES master_customer(global_customer_id)
+  );
+  ```
+
+  > `RENAME COLUMN` 문법은 MySQL 8.0+ 전용. Ubuntu 22.04 기본 MySQL이 8.0이므로 정상 동작.
+  > 마이그레이션 완료 후 `SHOW COLUMNS FROM users;` 등으로 컬럼명 확인 필수.
+
+- **로컬 테스트 환경 정비**
+
+  - `lifesync360-platform/app.py` 에서 `JWT_SECRET` 라인이 주석처리된 것 발견
+    ```python
+    # 기존 (주석처리됨 → 변수 미정의 상태 → 로컬 실행 불가)
+    # JWT_SECRET = os.environ['JWT_SECRET']
+
+    # 수정 후 (로컬 fallback + 운영 환경 변수 주입 공존)
+    JWT_SECRET = os.environ.get('JWT_SECRET', 'dev-jwt-secret-lifesync360-32bytes!!')
+    ```
+  - `lifesync360-platform/make_token.py` 신규 작성 — 로컬 테스트용 JWT 토큰 발급
+    ```python
+    import jwt
+    import datetime
+    from datetime import timezone
+
+    JWT_SECRET = 'dev-jwt-secret-lifesync360-32bytes!!'
+
+    token = jwt.encode({
+        'sub': 'LS-AABBCC11-000001',
+        'gid': 'G000000001',
+        'exp': datetime.datetime.now(timezone.utc) + datetime.timedelta(hours=24),
+    }, JWT_SECRET, algorithm='HS256')
+
+    print(token)
+    ```
+  - `.env.local`은 이미 `JWT_SECRET=dev-jwt-secret-lifesync360-32bytes!!` 포함 → 수정 불필요
+  - 로컬 테스트 실행 방법:
+    ```bash
+    cd lifesync360-platform
+
+    # 토큰 발급
+    python make_token.py
+    # 출력 예: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+    # 앱 실행 (Mock 모드)
+    USE_MOCK=true JWT_SECRET=dev-jwt-secret-lifesync360-32bytes!! python app.py
+
+    # API 호출 테스트
+    curl http://localhost:5000/api/me \
+      -H "Authorization: Bearer <위에서 발급한 토큰>"
+    ```
+
 - **미완료 / 추후 작업 필요**
   - `/api/me` 응답의 `name`: `customer_pii_secure` 복호화 연동 필요
   - `/api/me` 응답의 `grade`: DynamoDB `dynamic_grade` 조회 연동 필요
-  - 온프레미스 실서버에 schema.sql 변경사항 마이그레이션 적용 필요 (컬럼 DROP/RENAME)
+  - 온프레미스 실서버에 schema.sql 변경사항 마이그레이션 적용 필요 (위 ALTER TABLE 스크립트 실행)
+
+---
+
+### 2026-05-14 (2차)
+
+- **lifesync360-platform 포인트 기능 완전 제거**
+  - Aurora에 `points` / `point_history` 테이블 없음 → 기능 삭제 결정
+  - `app.py`: `MOCK_POINTS`, `MOCK_POINT_HISTORY` import 제거, `settings()` 라우트 단순화 (포인트 변수 전달 제거)
+  - `templates/settings.html`: 포인트 탭 버튼(`.stab-bar`), 포인트 잔액 카드, 포인트 이력 테이블 전체 삭제, `switchStab()` JS 함수 제거
+  - 등급 정보는 DynamoDB에서 조회 — `settings.html` grade 표시 영역 유지
+
+- **admin-platform Aurora 쿼리 전면 재작성 (실제 Service-DB 스키마 기준)**
+  - `overview()` 비Mock 블록:
+    - `active_campaigns`: `campaign_master WHERE end_date >= CURDATE()` (컬럼명 `start_date`/`end_date` 반영)
+    - `recent_recommends`: `customer_recommend_history` JOIN `product_master` (`clicked_flag`/`purchased_flag` CHAR(1) 방식)
+    - `product_funnel`: `customer_recommend_history` JOIN `product_master` + `company_master`, `SUM(clicked_flag="Y")` 집계
+    - `top_viewed`: `customer_dashboard_log` JOIN `product_master` WHERE `product_click='Y'` (존재하지 않는 `customer_event_log` 대체)
+    - `tab_clicks`: `customer_dashboard_log GROUP BY page_type`
+  - `users()` 비Mock: DynamoDB scan 기반 목록 — Aurora `users_ref` 동기화 전까지 `name`/`email`은 `'-'` 표시
+  - `user_detail()` 비Mock: DynamoDB(점수/등급) + Lambda(_call_onprem 'get_consent') + Aurora(추천 이력) + Private API(제휴사 매핑)
+  - 등급 분포 집계: DynamoDB scan → `dynamic_grade` 기준 집계 (Aurora users.grade 컬럼 없음)
+
+- **admin-platform Mock 데이터 실제 스키마 기준 전면 정합**
+  - `MOCK_CONSENTS`: `consent_key`→`domain`, `consent_yn`→`consent_flag`, 모든 도메인 키 대문자 통일
+  - `MOCK_RECOMMEND_HISTORY` / `MOCK_RECENT_RECOMMENDS`: `clicked_at`/`purchased_at` DATETIME → `clicked_flag`/`purchased_flag` CHAR(1) 'Y'/'N'
+  - `MOCK_CAMPAIGNS`: `start_dt`/`end_dt` → `start_date`/`end_date`
+  - `MOCK_USERS`: `PLATINUM`→`VIP`, `BRONZE`→`BASIC` (실제 등급 체계 반영)
+  - `MOCK_PRODUCT_FUNNEL`: `affiliate` 값 대문자 통일 (`'insurance'`→`'INSURANCE'` 등)
+  - `MOCK_TAB_CLICKS`: `'포인트'` 항목 제거
+
+- **admin-platform 템플릿 컬럼명 수정**
+  - `overview.html`: `url_for('user_detail', ls_user_id=...)` → `global_id=...`, `c.start_dt`/`c.end_dt` → `c.start_date`/`c.end_date`, `r.purchased_at`/`r.clicked_at` → `r.purchased_flag == 'Y'`/`r.clicked_flag == 'Y'`
+  - `user_detail.html`: `c.consent_key`→`c.domain`, `c.consent_yn == 'Y'`→`c.consent_flag == 'Y'`, 추천이력 플래그 동일 변경
+  - `users.html`: `url_for('user_detail', ls_user_id=...)` → `global_id=...`
+
+- **온프레미스 대량 조회 아키텍처 결정**
+  - 유저 목록/검색(bulk) → Lambda round-trip 부적합, 응답 지연 + 비용 문제
+  - 단기: DynamoDB 기반 유저 목록 (`name`/`email`은 `-` 표시)
+  - 장기: Aurora `users_ref` 동기화 테이블 구축 — 온프레미스 `users` 테이블의 비PII 필드 (`global_id`, `ls_user_id`, `login_email`, `user_status`)를 주기적으로 Aurora에 동기화
+  - 개별 유저 조회(user_detail) → Lambda OK (per-user action, 지연 허용)
+
+- **미완료 / 추후 작업 필요**
+  - Aurora `users_ref` 동기화 테이블 설계 및 구현 (어드민 유저목록 이름/이메일 표시, total_users 정확도)
+  - consent_rate 어드민 overview 현재 0 하드코딩 → `users_ref` 동기화 후 구현
+  - `/api/me` name 복호화 (`customer_pii_secure` KMS/AES 방식 확정 필요)
+  - `/api/me` grade DynamoDB 연동
+
+---
+
+### 2026-05-14 (1차)
+
+- **온프레미스 고객 데이터 조회 Lambda 신규 작성** (`lambda/onprem_customer_query/`)
+  - 역할: Platform VPC → Site-to-Site VPN → 온프레미스 Private API 직접 호출 (Control Node 미경유)
+  - 지원 액션: `login` / `register` / `get_user` / `get_consent` / `save_consent` / `get_profile` / `get_all`
+  - stdlib(urllib)만 사용, 외부 의존성 없음 (`requirements.txt` 비어있음)
+  - 환경변수: `PRIVATE_API_URL=http://172.16.1.73` (VPN 경유 on-prem API 주소)
+  - 엔드포인트 매핑:
+
+    | action | HTTP | 경로 |
+    |--------|------|------|
+    | login | POST | `/internal/auth/login` |
+    | register | POST | `/internal/auth/register` |
+    | get_user | GET | `/internal/auth/user/{ls_user_id}` |
+    | get_consent | GET | `/internal/consent/{global_id}` |
+    | save_consent | POST | `/internal/auth/consent` |
+    | get_profile | GET | `/internal/customer/{global_id}` |
+    | get_all | GET ×2 | customer + consent 순차 조회 후 병합 |
+
+- **private_api/app.py — 인증 엔드포인트 4개 신규 추가**
+  - `POST /internal/auth/login`: `login_email` 기준 사용자 조회 + `check_password_hash` 검증 (werkzeug)
+  - `POST /internal/auth/register`: `master_customer` + `users` 동시 INSERT
+  - `GET /internal/auth/user/{ls_user_id}`: 사용자 조회
+  - `POST /internal/auth/consent`: `consent` 테이블 UPSERT (`INSERT ... ON DUPLICATE KEY UPDATE`)
+  - 전체 필드명 `global_customer_id` → `global_id` 전환 (팀 합의 반영)
+  - `ansible/roles/private_api/tasks/main.yml` pip 목록에 `werkzeug` 추가
+
+- **lifesync360-platform/app.py — 온프레미스 Lambda 연동 전환**
+  - `get_auth_db()` 직접 연결 제거 → `_call_onprem(action, **kwargs)` Lambda 호출 헬퍼로 대체
+  - `ONPREM_QUERY_LAMBDA = os.environ.get('ONPREM_QUERY_LAMBDA', '')` 환경변수로 함수명 주입
+  - register / login / me / consent 라우트 모두 Lambda 경유로 전환
+  - `taskdef.json`에 `{ "name": "ONPREM_QUERY_LAMBDA", "value": "lifesync-onprem-customer-query" }` 추가
+  - `taskdef.json`에 `AUTH_DB_HOST` 환경변수 없음 → Lambda 전환으로 해소
+
+- **Control Node deploy_webhook — PRIVATE_API_URL 추가 및 `/query` 엔드포인트**
+  - `deploy_webhook.service`에 `Environment=PRIVATE_API_URL=http://172.16.1.73` 추가
+  - `deploy_webhook.py`에 `/query` 엔드포인트 추가 (Option B 백업 경로 — Lambda는 직접 VPN 사용)
+
+- **멀티 VPC IPSec 설계 확인**
+  - StrongSwan `rightsubnet`에 여러 CIDR 콤마 구분 지원 확인
+  - Platform VPC + Data VPC CIDR 추가 시 기존 Management VPC 터널 영향 없음
+  - On-prem ipsec.conf 수정 필요 (IaC 배포 전 온프레미스 담당자 작업):
+    ```
+    rightsubnet=<Management VPC CIDR>,<Platform VPC CIDR>,<Data VPC CIDR>
+    ```
+    수정 후: `sudo systemctl restart strongswan-starter`
+
+- **미완료 / 추후 작업 필요**
+  - Lambda IaC 배포: Platform VPC 서브넷 지정, SG outbound 172.16.1.73:80, env `PRIVATE_API_URL`
+  - ECS Task Role (`lifesync-EcsPlatformTaskRole`) — `lambda:InvokeFunction` 권한 추가 필요
+  - On-prem ipsec.conf `rightsubnet` Platform VPC CIDR 추가 + StrongSwan 재시작
+  - `schema.sql` 및 기존 수정 파일(consent_filter, customer_profile_sync 등)의 `global_customer_id` → `global_id` 전환 (팀 합의 기준으로 불일치 상태)
+  - Platform VPC TGW Attachment IaC (현재 Management VPC만 TGW 연결됨)
 
 ---
 
@@ -1043,8 +1302,12 @@ aws ssm get-parameter \
 | GitHub Secrets 등록 | 배포 담당자 | AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY |
 | Parameter Store 등록 | 배포 담당자 | /lifesync360/ecr-uri / ecr-uri-admin |
 | CloudFormation 스택 배포 | IaC 담당자 | cloud-deploy-procedure.md |
-| Lambda TGW Attachment | IaC 담당자 | lambda-to-onprem-network.md |
+| Lambda TGW Attachment (Platform VPC) | IaC 담당자 | lambda-to-onprem-network.md |
+| onprem_customer_query Lambda IaC 배포 (Platform VPC / SG outbound 172.16.1.73:80 / PRIVATE_API_URL) | IaC 담당자 | lambda-to-onprem-network.md |
+| ECS Task Role lambda:InvokeFunction 권한 추가 (lifesync-EcsPlatformTaskRole) | IaC 담당자 | taskdef.json ONPREM_QUERY_LAMBDA 참고 |
+| On-prem ipsec.conf rightsubnet Platform VPC CIDR 추가 + strongswan 재시작 | 온프레미스 담당자 | aws-vpn-setup.md |
+| private_api Ansible 재배포 (werkzeug 추가 + 인증 엔드포인트 4개) | 온프레미스 담당자 | roles/private_api/ |
 | 동의 고객 선별 Lambda 구현 | 개발 | ETL 파이프라인 AWS→GCP 전송 전 consent 필터링 |
-| settings 포인트 Aurora 연동 | 개발 | /api/points 엔드포인트 추가 |
+| Aurora users_ref 동기화 테이블 구축 (어드민 유저목록 이름/이메일, total_users 정확도) | 개발 | on-prem users → Aurora 주기 동기화 |
 | /api/my-products 운영 연결 | 개발 | Aurora consent 테이블 체크 |
 | upgrade_actions 운영 연결 | 개발 | DynamoDB/Aurora 실데이터 ctx |

@@ -134,8 +134,8 @@
             <div class="consent-grid">
                 {% for c in consents %}
                 <div class="consent-item">
-                    <span class="consent-key">{{ consent_labels.get(c.consent_key, c.consent_key) }}</span>
-                    {% if c.consent_yn == 'Y' %}
+                    <span class="consent-key">{{ consent_labels.get(c.domain, c.domain) }}</span>
+                    {% if c.consent_flag == 'Y' %}
                     <span class="consent-y">동의</span>
                     {% else %}
                     <span class="consent-n">미동의</span>
@@ -168,9 +168,9 @@
                         <tr>
                             <td>{{ r.product_name }}</td>
                             <td>
-                                {% if r.purchased_at %}
+                                {% if r.purchased_flag == 'Y' %}
                                 <span class="badge badge-purchased">구매완료</span>
-                                {% elif r.clicked_at %}
+                                {% elif r.clicked_flag == 'Y' %}
                                 <span class="badge badge-clicked">클릭</span>
                                 {% else %}
                                 <span class="badge badge-recommended">추천됨</span>

@@ -20,15 +20,9 @@
         </div>
     </header>
 
-    <div class="stab-bar">
-        <button class="stab-btn active" id="stab-settings-btn" onclick="switchStab('settings')">설정</button>
-        <button class="stab-btn" id="stab-points-btn" onclick="switchStab('points')">포인트</button>
-    </div>
-
     <main class="content">
 
-        <!-- ── 설정 탭 ── -->
-        <div id="stab-settings" class="stab-content">
+        <div>
 
             <!-- 메인 메뉴 -->
             <div id="view-main" class="settings-panel">
@@ -106,38 +100,6 @@
 
         </div>
 
-        <!-- ── 포인트 탭 ── -->
-        <div id="stab-points" class="stab-content hidden">
-            <div style="padding: 16px 16px 24px;">
-                <div class="grade-card">
-                    <div class="grade-current">
-                        <span class="grade-label">현재 등급</span>
-                        <span class="grade-name" id="s-grade-name">-</span>
-                    </div>
-                    <div class="grade-progress-bar">
-                        <div class="grade-progress-fill" style="width: {{ points.next_grade_percent }}%"></div>
-                    </div>
-                    <p class="grade-next-info">{{ points.next_grade }}까지 <strong>{{ points.next_grade_points }}P</strong> 남음</p>
-                    <div class="points-total">
-                        <span>보유 포인트</span>
-                        <strong>{{ "{:,}".format(points.balance) }}P</strong>
-                    </div>
-                </div>
-                <div class="history-list">
-                    <p class="history-title">포인트 이력</p>
-                    {% for h in point_history %}
-                    <div class="history-item">
-                        <div class="history-info">
-                            <span class="history-desc">{{ h.desc }}</span>
-                            <span class="history-date">{{ h.date }}</span>
-                        </div>
-                        <span class="history-points {{ h.type }}">{{ h.points }}P</span>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-        </div>
-
     </main>
 
     <nav class="bottom-nav">
@@ -186,21 +148,6 @@
         currentSubView = id;
     }
 
-    function switchStab(tab) {
-        document.querySelectorAll('.stab-content').forEach(c => c.classList.add('hidden'));
-        document.querySelectorAll('.stab-btn').forEach(b => b.classList.remove('active'));
-        document.getElementById(`stab-${tab}`).classList.remove('hidden');
-        document.getElementById(`stab-${tab}-btn`).classList.add('active');
-        if (tab === 'settings') {
-            document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
-            document.getElementById('view-main').classList.remove('hidden');
-            document.getElementById('header-title').textContent = '설정';
-            currentSubView = null;
-        } else {
-            document.getElementById('header-title').textContent = '포인트';
-        }
-    }
-
     function selectGrade(grade) {
         const info = GRADE_BENEFITS[grade];
         const badge = document.getElementById('sel-grade-badge');
@@ -229,10 +176,6 @@
         document.getElementById('s-name').textContent = user.name;
         document.getElementById('s-email').textContent = user.email;
         document.getElementById('s-userid').textContent = user.ls_user_id;
-
-        const gradeEl = document.getElementById('s-grade-name');
-        gradeEl.textContent = user.grade;
-        gradeEl.className = `grade-name grade-${user.grade.toLowerCase()}`;
 
         document.querySelectorAll('.ladder-btn').forEach(btn => {
             if (btn.dataset.grade === user.grade) btn.classList.add('current-grade');

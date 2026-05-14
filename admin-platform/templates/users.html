@@ -41,7 +41,7 @@
                     <td>{{ u.email }}</td>
                     <td><span class="badge badge-{{ u.grade | lower }}">{{ u.grade }}</span></td>
                     <td class="mono">{{ u.ls_user_id }}</td>
-                    <td><a class="table-link" href="{{ url_for('user_detail', ls_user_id=u.ls_user_id) }}">상세보기</a></td>
+                    <td><a class="table-link" href="{{ url_for('user_detail', global_id=u.global_id) }}">상세보기</a></td>
                 </tr>
                 {% endfor %}
             </tbody>

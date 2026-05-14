@@ -83,12 +83,12 @@ def _build_pivot_sql(keys):
     )
     return f"""
         SELECT
-            global_customer_id AS global_id,
+            global_id,
             {cases}
         FROM consent
-        GROUP BY global_customer_id
+        GROUP BY global_id
         HAVING SUM(consent_flag = 'Y') > 0
-        ORDER BY global_customer_id
+        ORDER BY global_id
     """
 
 

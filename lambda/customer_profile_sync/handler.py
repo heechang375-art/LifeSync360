@@ -3,10 +3,10 @@
 트리거: 플랫폼 로그인 시 Flask app에서 boto3 invoke (RequestResponse)
 
 역할:
-  1. On-Prem Private API /internal/identity 호출 → global_customer_id 조회
+  1. On-Prem Private API /internal/identity 호출 → global_id 조회
      (source_customer_id = 플랫폼 가입 이메일, domain = 기본 'BANK')
-  2. On-Prem users.global_customer_id 업데이트 (변경 시에만)
-  3. global_customer_id 반환
+  2. On-Prem users.global_id 업데이트 (변경 시에만)
+  3. global_id 반환
 """
 import json
 import os
@@ -35,11 +35,11 @@ def _get_db():
     )
 
 
-def _fetch_global_customer_id(email, domain):
+def _fetch_global_id(email, domain):
     encoded = urllib.parse.quote(email, safe='')
     url = f'{PRIVATE_API_URL}/internal/identity/{encoded}?domain={domain}'
     with urllib.request.urlopen(url, timeout=5) as resp:
-        return json.loads(resp.read())['global_customer_id']
+        return json.loads(resp.read())['global_id']
 
 
 def _resp(status, body):
@@ -60,9 +60,9 @@ def handler(event, context):
     if not ls_user_id or not email:
         return _resp(400, {'error': '필수 필드 누락: ls_user_id, email'})
 
-    # 1. On-Prem Private API에서 global_customer_id 조회
+    # 1. On-Prem Private API에서 global_id 조회
     try:
-        global_customer_id = _fetch_global_customer_id(email, domain)
+        global_id = _fetch_global_id(email, domain)
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return _resp(404, {'error': f'계열사 ID 매핑 없음: email={email}, domain={domain}'})
@@ -70,16 +70,16 @@ def handler(event, context):
     except Exception as e:
         return _resp(502, {'error': f'Private API 연결 실패: {str(e)}'})
 
-    # 2. On-Prem users.global_customer_id 업데이트 (이미 같은 값이면 스킵)
+    # 2. On-Prem users.global_id 업데이트 (이미 같은 값이면 스킵)
     db = _get_db()
     try:
         with db.cursor() as cur:
             cur.execute(
-                'UPDATE users SET global_customer_id = %s WHERE ls_user_id = %s AND (global_customer_id IS NULL OR global_customer_id != %s)',
-                (global_customer_id, ls_user_id, global_customer_id),
+                'UPDATE users SET global_id = %s WHERE ls_user_id = %s AND (global_id IS NULL OR global_id != %s)',
+                (global_id, ls_user_id, global_id),
             )
             db.commit()
     finally:
         db.close()
 
-    return _resp(200, {'global_customer_id': global_customer_id, 'ls_user_id': ls_user_id})
+    return _resp(200, {'global_id': global_id, 'ls_user_id': ls_user_id})
