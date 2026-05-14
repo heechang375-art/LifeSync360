@@ -23,10 +23,14 @@
         { "name": "REDIS_PORT",    "value": "6379" },
         { "name": "USE_MOCK",              "value": "false" },
         { "name": "PROFILE_SYNC_LAMBDA",  "value": "customer-profile-sync" },
-        { "name": "ONPREM_QUERY_LAMBDA",  "value": "lifesync-onprem-customer-query" },
-        { "name": "JWT_SECRET",          "value": "lifesync360-prod-jwt-secret-32bytes-fixed" }
+        { "name": "ONPREM_QUERY_LAMBDA",  "value": "lifesync-onprem-customer-query" }
       ],
-      "secrets": [],
+      "secrets": [
+        {
+          "name": "JWT_SECRET",
+          "valueFrom": "arn:aws:ssm:ap-northeast-2:354493396671:parameter/lifesync360/jwt-secret"
+        }
+      ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
