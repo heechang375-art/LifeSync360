@@ -11,7 +11,7 @@ _PRODUCTS_DIR = Path(__file__).parent.parent / 'data' / 'products'
 MOCK_USERS = {
     'test@lifesync.com': {
         'ls_user_id':    'LS-AABBCC11-000001',
-        'global_id':     'G000000001',
+        'global_id':     'G000297409',
         'name':          '김철수',
         'email':         'test@lifesync.com',
         'password_hash': _PW_HASH,
@@ -19,7 +19,7 @@ MOCK_USERS = {
     },
     'test2@lifesync.com': {
         'ls_user_id':    'LS-DDEEFF22-000002',
-        'global_id':     'G000000002',
+        'global_id':     'G000672689',
         'name':          '이수진',
         'email':         'test2@lifesync.com',
         'password_hash': _PW_HASH,
@@ -27,7 +27,7 @@ MOCK_USERS = {
     },
     'test3@lifesync.com': {
         'ls_user_id':    'LS-99AABB33-000003',
-        'global_id':     'G000000003',
+        'global_id':     'G000115282',
         'name':          '박지훈',
         'email':         'test3@lifesync.com',
         'password_hash': _PW_HASH,

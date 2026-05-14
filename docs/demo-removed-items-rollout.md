@@ -231,50 +231,6 @@ return jsonify(list(grouped.values()))
 
 ---
 
-## 11. Service-DB 시드 데이터 부족
-
-### 현재 부재
-- `customer_recommend_history`: 0건
-- `customer_dashboard_log`: 0건
-
-### 운영 구현 방법
-- **자연 누적** (가장 단순): 사용자 호출이 쌓이면 자동 적재
-- **시드 INSERT** (시연 빠르게 보여주려면):
-  - 모의 유저 1000건 × 추천 5건씩 = 5000건 INSERT
-  - clicked_flag 일부 'Y' / purchased_flag 일부 'Y'
-- **clicked_flag/purchased_flag UPDATE 로직** 이미 추가됨 (구매 시 자동 누적)
-
----
-
-## 12. DynamoDB 데이터 적재
-
-### 현재 상태
-- `lifesync_customer_result` 테이블에 일부 global_id만 적재됨 (`G000297409` 등)
-- 시연용 Mock 유저(`G000000001`/`G000000002`/`G000000003`) 데이터 수동 put-item 필요
-
-### 운영 구현 방법
-1. **gcp_result_ingest Lambda 정상 운영**: GCP Vertex AI 분석 결과 → DynamoDB 자동 적재
-2. **raw 점수 sync** (선택): `customer_360_profile.finance_score/asset_score/lifesync_score` 등을 DynamoDB로 동기화
-3. 100만 유저 전체 적재 후 어드민 등급 분포/최근 분석 화면 풍부해짐
-
----
-
-## 13. 온프레 schema vs schema_reference vs Service-DB 정합
-
-### 정리된 부분
-- `schema_reference.md` 기준 코드/스키마 통일 완료 (5/13~14 작업)
-- HOSPITAL/WEARABLE 도메인 분석용으로 명시 (Aurora 상품 매핑 없음)
-
-### 잔존 정합 이슈
-- Aurora `company_code` ↔ 온프레 `consent.domain` 매핑:
-  - Aurora `SEC` ↔ 온프레 `STOCK`
-  - Aurora `INS` ↔ 온프레 `INSURANCE`
-  - Aurora `ONINS` ↔ 온프레 `INTERNET_INSURANCE`
-  - Aurora `HLT` ↔ 온프레 `HEALTHCARE`
-- 코드에서 이 변환 매핑 함수 필요 (현재 일부는 그대로 사용)
-
----
-
 ## 14. 운영 전환 체크리스트 (요약)
 
 ### 인프라
