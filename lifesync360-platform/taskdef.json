@@ -4,8 +4,8 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",
   "memory": "1024",
-  "executionRoleArn": "arn:aws:iam::732264765472:role/lifesync-dev-21-lifesync-ecs-exist-EcsExecutionRole-A2eQoeWGranp",
-  "taskRoleArn": "arn:aws:iam::732264765472:role/lifesync-dev-21-lifesync-ecs-existing-v-EcsTaskRole-3EkSGfTWb9ZF",
+  "executionRoleArn": "arn:aws:iam::732264765472:role/lifesync-dev-21-lifesync-ecs-exist-EcsExecutionRole-Dm8CCIe7mct9",
+  "taskRoleArn": "arn:aws:iam::732264765472:role/lifesync-dev-21-lifesync-ecs-existing-v-EcsTaskRole-88cLRd8Eqk8y",
   "containerDefinitions": [
     {
       "name": "app",
