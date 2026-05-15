@@ -95,12 +95,36 @@ VALUES
 
 ('HLT','TELEMED','consulting_type','상담유형'),
 ('HLT','TELEMED','service_channel','서비스 채널'),
-('HLT','TELEMED','reservation_required','예약 필요 여부');
+('HLT','TELEMED','reservation_required','예약 필요 여부'),
+
+-- BANK PENSION (IRP)
+('BANK','PENSION','monthly_premium','월 납입금'),
+('BANK','PENSION','pension_start_age','연금개시연령'),
+('BANK','PENSION','tax_benefit','세제혜택'),
+
+-- SEC PENSION (연금저축 펀드) - 기존 SEC/PENSION은 누락되어 있어 추가
+('SEC','PENSION','monthly_premium','월 납입금'),
+('SEC','PENSION','pension_start_age','연금개시연령'),
+('SEC','PENSION','tax_benefit','세제혜택'),
+
+-- HLT POINT (건강 포인트 리워드)
+('HLT','POINT','reward_point','건강 리워드 포인트'),
+('HLT','POINT','point_brand','제휴 브랜드'),
+('HLT','POINT','point_rate','포인트 적립률');
 
 
 -- ===============================================================
 -- STEP 5-2. product_option 대량 생성
--- 상품별 3~6개 옵션 생성
+-- 등급(target_grade) 기반 결정 로직으로 옵션 값 차등 적용
+--
+-- 등급별 원칙:
+--   VIP    : 최고 한도/최고 혜택 (예적금 금리 최고, 대출 금리 최저, 연회비 높음, 보장 최고)
+--   GOLD   : 우대 조건
+--   SILVER : 표준
+--   BASIC  : 기본/저렴
+--   CARE   : 비금융 케어 서비스(헬스/펫) - 등급 외 케어 전용
+--
+-- 같은 등급/카테고리 내에서 약간의 분산을 주기 위해 product_id 기반 MOD 사용
 -- ===============================================================
 
 INSERT INTO product_option
@@ -116,167 +140,411 @@ SELECT
     CASE
 
         -- =======================================================
-        -- BANK
+        -- BANK : 예금/적금 금리 (등급 높을수록 우대금리)
         -- =======================================================
-        WHEN t.option_name = 'interest_rate'
-            THEN CONCAT(ROUND(2.5 + (RAND(p.product_id) * 2.5), 2), '%')
+        WHEN t.option_name = 'interest_rate' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN CONCAT(ROUND(5.0 + MOD(p.product_id, 10) * 0.05, 2), '%')
+                WHEN 'GOLD'   THEN CONCAT(ROUND(4.2 + MOD(p.product_id, 10) * 0.05, 2), '%')
+                WHEN 'SILVER' THEN CONCAT(ROUND(3.5 + MOD(p.product_id, 10) * 0.05, 2), '%')
+                WHEN 'BASIC'  THEN CONCAT(ROUND(2.8 + MOD(p.product_id, 10) * 0.05, 2), '%')
+                ELSE CONCAT(ROUND(3.0 + MOD(p.product_id, 10) * 0.05, 2), '%')
+            END
 
-        WHEN t.option_name = 'min_deposit_amount'
-            THEN CONCAT(FLOOR(100000 + (RAND(p.product_id) * 900000)), ' KRW')
+        -- BANK : 최소 가입금액 (등급 높을수록 진입장벽 높음 = 큰 금액)
+        WHEN t.option_name = 'min_deposit_amount' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '100,000,000 KRW'
+                WHEN 'GOLD'   THEN '10,000,000 KRW'
+                WHEN 'SILVER' THEN '1,000,000 KRW'
+                WHEN 'BASIC'  THEN '100,000 KRW'
+                ELSE '500,000 KRW'
+            END
 
-        WHEN t.option_name = 'term_month'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 5), '6', '12', '24', '36', '60')
+        -- BANK : 가입기간 (등급 높을수록 장기 선호)
+        WHEN t.option_name = 'term_month' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN ELT(1 + MOD(p.product_id, 2), '36', '60')
+                WHEN 'GOLD'   THEN ELT(1 + MOD(p.product_id, 2), '24', '36')
+                WHEN 'SILVER' THEN ELT(1 + MOD(p.product_id, 2), '12', '24')
+                WHEN 'BASIC'  THEN ELT(1 + MOD(p.product_id, 2), '6', '12')
+                ELSE '12'
+            END
 
-        WHEN t.option_name = 'preferential_condition'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 5),
-                     '급여이체', '자동이체', '카드사용', '비대면가입', 'VIP고객')
+        -- BANK : 우대조건
+        WHEN t.option_name = 'preferential_condition' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN 'PB 전담매니저 / 거액예치 / 자산관리 통합실적'
+                WHEN 'GOLD'   THEN '급여이체 + 카드사용 100만원 이상'
+                WHEN 'SILVER' THEN '자동이체 3건 이상 / 급여이체'
+                WHEN 'BASIC'  THEN '비대면 가입'
+                ELSE '거래실적 충족'
+            END
 
-        WHEN t.option_name = 'monthly_limit'
-            THEN CONCAT(FLOOR(100000 + RAND(p.product_id) * 1900000), ' KRW')
+        -- BANK : 월 납입한도
+        WHEN t.option_name = 'monthly_limit' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '5,000,000 KRW'
+                WHEN 'GOLD'   THEN '2,000,000 KRW'
+                WHEN 'SILVER' THEN '1,000,000 KRW'
+                WHEN 'BASIC'  THEN '500,000 KRW'
+                ELSE '500,000 KRW'
+            END
 
-        WHEN t.option_name = 'auto_transfer_required'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 2), 'Y', 'N')
+        -- BANK : 자동이체 필요 여부 (BASIC/SILVER는 필수, VIP는 선택)
+        WHEN t.option_name = 'auto_transfer_required' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN 'N'
+                WHEN 'GOLD'   THEN 'N'
+                ELSE 'Y'
+            END
 
-        WHEN t.option_name = 'loan_limit'
-            THEN CONCAT(FLOOR(10000000 + RAND(p.product_id) * 90000000), ' KRW')
+        -- BANK : 대출한도 (등급 높을수록 한도 큼)
+        WHEN t.option_name = 'loan_limit' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '500,000,000 KRW'
+                WHEN 'GOLD'   THEN '100,000,000 KRW'
+                WHEN 'SILVER' THEN '50,000,000 KRW'
+                WHEN 'BASIC'  THEN '20,000,000 KRW'
+                ELSE '30,000,000 KRW'
+            END
 
-        WHEN t.option_name = 'loan_rate'
-            THEN CONCAT(ROUND(4.0 + RAND(p.product_id) * 6.0, 2), '%')
+        -- BANK : 대출금리 (등급 높을수록 우대금리, 즉 낮음)
+        WHEN t.option_name = 'loan_rate' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN CONCAT(ROUND(3.5 + MOD(p.product_id, 10) * 0.05, 2), '%')
+                WHEN 'GOLD'   THEN CONCAT(ROUND(4.5 + MOD(p.product_id, 10) * 0.05, 2), '%')
+                WHEN 'SILVER' THEN CONCAT(ROUND(6.0 + MOD(p.product_id, 10) * 0.05, 2), '%')
+                WHEN 'BASIC'  THEN CONCAT(ROUND(8.0 + MOD(p.product_id, 10) * 0.05, 2), '%')
+                ELSE CONCAT(ROUND(7.0 + MOD(p.product_id, 10) * 0.05, 2), '%')
+            END
 
-        WHEN t.option_name = 'repayment_type'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 3),
-                     '원리금균등', '만기일시', '원금균등')
+        -- BANK : 상환방식
+        WHEN t.option_name = 'repayment_type' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '만기일시'
+                WHEN 'GOLD'   THEN '원금균등'
+                ELSE '원리금균등'
+            END
 
-        WHEN t.option_name = 'credit_score_required'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 4),
-                     '600+', '700+', '800+', '900+')
-
-        -- =======================================================
-        -- CARD
-        -- =======================================================
-        WHEN t.option_name = 'annual_fee'
-            THEN CONCAT(FLOOR(10000 + RAND(p.product_id) * 190000), ' KRW')
-
-        WHEN t.option_name = 'cashback_rate'
-            THEN CONCAT(ROUND(0.5 + RAND(p.product_id) * 4.5, 2), '%')
-
-        WHEN t.option_name = 'mileage_rate'
-            THEN CONCAT(ROUND(0.5 + RAND(p.product_id) * 3.0, 2), ' mile/KRW')
-
-        WHEN t.option_name = 'main_benefit'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 6),
-                     '여행', '쇼핑', '주유', '배달', '병원', 'OTT')
-
-        WHEN t.option_name = 'point_rate'
-            THEN CONCAT(ROUND(0.3 + RAND(p.product_id) * 3.5, 2), '%')
-
-        WHEN t.option_name = 'point_brand'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 5),
-                     '온라인몰', '항공사', '대형마트', '편의점', '병원')
-
-        WHEN t.option_name = 'discount_rate'
-            THEN CONCAT(ROUND(3 + RAND(p.product_id) * 17, 2), '%')
-
-        WHEN t.option_name = 'benefit_category'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 6),
-                     '쇼핑', '교육', '의료', '반려동물', '골프', '모빌리티')
-
-        -- =======================================================
-        -- SEC
-        -- =======================================================
-        WHEN t.option_name = 'expected_return'
-            THEN CONCAT(ROUND(3 + RAND(p.product_id) * 12, 2), '%')
-
-        WHEN t.option_name = 'volatility'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 3), 'LOW', 'MID', 'HIGH')
-
-        WHEN t.option_name = 'investment_region'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 6),
-                     'KOREA', 'US', 'GLOBAL', 'CHINA', 'INDIA', 'EMERGING')
-
-        WHEN t.option_name = 'asset_type'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 5),
-                     'EQUITY', 'BOND', 'MIXED', 'REITs', 'COMMODITY')
-
-        WHEN t.option_name = 'risk_grade'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 5),
-                     '1_LOW', '2_MID_LOW', '3_MID', '4_MID_HIGH', '5_HIGH')
-
-        WHEN t.option_name = 'fund_type'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 5),
-                     '성장형', '배당형', '채권형', '혼합형', 'ESG형')
-
-        WHEN t.option_name = 'advisor_type'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 4),
-                     'PB', 'RoboAdvisor', 'AI Advisor', 'Hybrid')
-
-        -- =======================================================
-        -- INS / ONLINE INS
-        -- =======================================================
-        WHEN t.option_name = 'monthly_premium'
-            THEN CONCAT(FLOOR(10000 + RAND(p.product_id) * 290000), ' KRW')
-
-        WHEN t.option_name = 'coverage_type'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 6),
-                     '암', '실손', '건강', '운전자', '치아', '간병')
-
-        WHEN t.option_name = 'coverage_amount'
-            THEN CONCAT(FLOOR(10000000 + RAND(p.product_id) * 190000000), ' KRW')
-
-        WHEN t.option_name = 'join_age_range'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 5),
-                     '20-40', '30-50', '40-60', '50-70', 'ALL')
-
-        WHEN t.option_name = 'pension_start_age'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 4), '55', '60', '65', '70')
-
-        WHEN t.option_name = 'tax_benefit'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 2), 'Y', 'N')
-
-        WHEN t.option_name = 'mobile_join'
-            THEN 'Y'
-
-        WHEN t.option_name = 'simple_underwriting'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 2), 'Y', 'N')
-
-        WHEN t.option_name = 'coverage_period'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 5),
-                     '1일', '7일', '30일', '1년', '10년')
+        -- BANK : 필요 신용점수 (등급 높을수록 더 높은 신용 필요)
+        WHEN t.option_name = 'credit_score_required' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '900+'
+                WHEN 'GOLD'   THEN '800+'
+                WHEN 'SILVER' THEN '700+'
+                WHEN 'BASIC'  THEN '600+'
+                ELSE '700+'
+            END
 
         -- =======================================================
-        -- HEALTHCARE
+        -- CARD : 연회비 (등급 높을수록 비쌈)
         -- =======================================================
-        WHEN t.option_name = 'service_channel'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 4),
-                     'APP', 'WEB', 'CENTER', 'HYBRID')
+        WHEN t.option_name = 'annual_fee' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN CONCAT(FLOOR(500000 + MOD(p.product_id, 10) * 100000), ' KRW')
+                WHEN 'GOLD'   THEN CONCAT(FLOOR(100000 + MOD(p.product_id, 10) * 20000), ' KRW')
+                WHEN 'SILVER' THEN CONCAT(FLOOR(30000 + MOD(p.product_id, 10) * 5000), ' KRW')
+                WHEN 'BASIC'  THEN CONCAT(FLOOR(10000 + MOD(p.product_id, 10) * 2000), ' KRW')
+                ELSE '20,000 KRW'
+            END
 
-        WHEN t.option_name = 'health_sync'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 3),
-                     'wearable', 'hospital', 'manual')
+        -- CARD : 캐시백률 (등급 높을수록 적립률 높음)
+        WHEN t.option_name = 'cashback_rate' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN CONCAT(ROUND(3.0 + MOD(p.product_id, 10) * 0.1, 2), '%')
+                WHEN 'GOLD'   THEN CONCAT(ROUND(2.0 + MOD(p.product_id, 10) * 0.1, 2), '%')
+                WHEN 'SILVER' THEN CONCAT(ROUND(1.2 + MOD(p.product_id, 10) * 0.05, 2), '%')
+                WHEN 'BASIC'  THEN CONCAT(ROUND(0.5 + MOD(p.product_id, 10) * 0.05, 2), '%')
+                ELSE CONCAT(ROUND(1.0, 2), '%')
+            END
 
-        WHEN t.option_name = 'checkup_type'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 5),
-                     '기본검진', '종합검진', '암검진', '유전자검사', '프리미엄검진')
+        -- CARD : 마일리지 적립률
+        WHEN t.option_name = 'mileage_rate' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '1000원당 3 mile'
+                WHEN 'GOLD'   THEN '1000원당 2 mile'
+                WHEN 'SILVER' THEN '1500원당 1 mile'
+                WHEN 'BASIC'  THEN '2000원당 1 mile'
+                ELSE '1500원당 1 mile'
+            END
 
-        WHEN t.option_name = 'ai_report'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 2), 'Y', 'N')
+        -- CARD : 주요 혜택
+        WHEN t.option_name = 'main_benefit' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN ELT(1 + MOD(p.product_id, 4), 'PP라운지/특급호텔/컨시어지', '항공권/호텔 무료숙박', '골프장 라운드', 'VIP 컨시어지')
+                WHEN 'GOLD'   THEN ELT(1 + MOD(p.product_id, 4), '여행/마일리지', '항공 라운지', '호텔 우대', '면세점 할인')
+                WHEN 'SILVER' THEN ELT(1 + MOD(p.product_id, 4), '쇼핑/외식', '주유/대중교통', '온라인쇼핑', '교육비')
+                WHEN 'BASIC'  THEN ELT(1 + MOD(p.product_id, 4), '편의점/카페', '배달/OTT', '마트 할인', '영화/문화')
+                ELSE '쇼핑/외식'
+            END
 
-        WHEN t.option_name = 'coaching_cycle'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 4),
-                     'DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY')
+        -- CARD : 포인트 적립률
+        WHEN t.option_name = 'point_rate' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN CONCAT(ROUND(3.0 + MOD(p.product_id, 10) * 0.1, 2), '%')
+                WHEN 'GOLD'   THEN CONCAT(ROUND(2.0 + MOD(p.product_id, 10) * 0.1, 2), '%')
+                WHEN 'SILVER' THEN CONCAT(ROUND(1.2 + MOD(p.product_id, 10) * 0.05, 2), '%')
+                WHEN 'BASIC'  THEN CONCAT(ROUND(0.5 + MOD(p.product_id, 10) * 0.05, 2), '%')
+                ELSE CONCAT(ROUND(1.0, 2), '%')
+            END
 
-        WHEN t.option_name = 'wearable_sync'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 2), 'Y', 'N')
+        -- CARD : 제휴 브랜드
+        WHEN t.option_name = 'point_brand' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '대한항공/특급호텔/프리미엄 백화점'
+                WHEN 'GOLD'   THEN '항공사/호텔/면세점'
+                WHEN 'SILVER' THEN '온라인몰/주유소/대형마트'
+                WHEN 'BASIC'  THEN '편의점/카페/배달앱'
+                ELSE '온라인몰'
+            END
 
-        WHEN t.option_name = 'reward_point'
-            THEN CONCAT(FLOOR(100 + RAND(p.product_id) * 9900), ' POINT')
+        -- CARD : 할인율
+        WHEN t.option_name = 'discount_rate' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN CONCAT(ROUND(15.0 + MOD(p.product_id, 10) * 0.5, 2), '%')
+                WHEN 'GOLD'   THEN CONCAT(ROUND(10.0 + MOD(p.product_id, 10) * 0.5, 2), '%')
+                WHEN 'SILVER' THEN CONCAT(ROUND(7.0 + MOD(p.product_id, 10) * 0.3, 2), '%')
+                WHEN 'BASIC'  THEN CONCAT(ROUND(5.0 + MOD(p.product_id, 10) * 0.2, 2), '%')
+                ELSE CONCAT(ROUND(7.0, 2), '%')
+            END
 
-        WHEN t.option_name = 'consulting_type'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 4),
-                     '의사상담', '영양상담', '운동상담', '심리상담')
+        -- CARD : 혜택 카테고리
+        WHEN t.option_name = 'benefit_category' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '골프/럭셔리/프리미엄'
+                WHEN 'GOLD'   THEN '여행/쇼핑/모빌리티'
+                WHEN 'SILVER' THEN '쇼핑/교육/주유'
+                WHEN 'BASIC'  THEN '배달/OTT/편의점'
+                WHEN 'CARE'   THEN '의료/반려동물/건강'
+                ELSE '쇼핑'
+            END
 
-        WHEN t.option_name = 'reservation_required'
-            THEN ELT(FLOOR(1 + RAND(p.product_id) * 2), 'Y', 'N')
+        -- =======================================================
+        -- SEC : 예상수익률 (등급 높을수록 적극적 운용)
+        -- =======================================================
+        WHEN t.option_name = 'expected_return' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN CONCAT(ROUND(12.0 + MOD(p.product_id, 10) * 0.5, 2), '%')
+                WHEN 'GOLD'   THEN CONCAT(ROUND(9.0 + MOD(p.product_id, 10) * 0.4, 2), '%')
+                WHEN 'SILVER' THEN CONCAT(ROUND(6.0 + MOD(p.product_id, 10) * 0.3, 2), '%')
+                WHEN 'BASIC'  THEN CONCAT(ROUND(4.0 + MOD(p.product_id, 10) * 0.2, 2), '%')
+                ELSE CONCAT(ROUND(6.0, 2), '%')
+            END
+
+        -- SEC : 변동성
+        WHEN t.option_name = 'volatility' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN 'HIGH'
+                WHEN 'GOLD'   THEN 'HIGH'
+                WHEN 'SILVER' THEN 'MID'
+                WHEN 'BASIC'  THEN 'LOW'
+                ELSE 'MID'
+            END
+
+        -- SEC : 투자지역
+        WHEN t.option_name = 'investment_region' THEN
+            ELT(1 + MOD(p.product_id, 6), 'KOREA', 'US', 'GLOBAL', 'CHINA', 'INDIA', 'EMERGING')
+
+        -- SEC : 자산유형
+        WHEN t.option_name = 'asset_type' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN ELT(1 + MOD(p.product_id, 3), 'EQUITY', 'MIXED', 'COMMODITY')
+                WHEN 'GOLD'   THEN ELT(1 + MOD(p.product_id, 3), 'EQUITY', 'MIXED', 'REITs')
+                WHEN 'SILVER' THEN ELT(1 + MOD(p.product_id, 3), 'MIXED', 'BOND', 'REITs')
+                WHEN 'BASIC'  THEN 'BOND'
+                ELSE 'MIXED'
+            END
+
+        -- SEC : 투자위험등급 (1=낮음, 5=높음)
+        WHEN t.option_name = 'risk_grade' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '5_HIGH'
+                WHEN 'GOLD'   THEN '4_MID_HIGH'
+                WHEN 'SILVER' THEN '3_MID'
+                WHEN 'BASIC'  THEN '2_MID_LOW'
+                ELSE '3_MID'
+            END
+
+        -- SEC : 펀드유형
+        WHEN t.option_name = 'fund_type' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '성장형'
+                WHEN 'GOLD'   THEN ELT(1 + MOD(p.product_id, 2), '성장형', 'ESG형')
+                WHEN 'SILVER' THEN ELT(1 + MOD(p.product_id, 3), '배당형', '혼합형', 'ESG형')
+                WHEN 'BASIC'  THEN '채권형'
+                ELSE '혼합형'
+            END
+
+        -- SEC : 자문유형
+        WHEN t.option_name = 'advisor_type' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN 'PB'
+                WHEN 'GOLD'   THEN ELT(1 + MOD(p.product_id, 2), 'Hybrid', 'AI Advisor')
+                WHEN 'SILVER' THEN 'RoboAdvisor'
+                WHEN 'BASIC'  THEN 'RoboAdvisor'
+                ELSE 'AI Advisor'
+            END
+
+        -- =======================================================
+        -- INS / ONLINE INS : 월 보험료 (등급 높을수록 비쌈, 보장 큼)
+        -- =======================================================
+        WHEN t.option_name = 'monthly_premium' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN CONCAT(FLOOR(500000 + MOD(p.product_id, 10) * 50000), ' KRW')
+                WHEN 'GOLD'   THEN CONCAT(FLOOR(150000 + MOD(p.product_id, 10) * 20000), ' KRW')
+                WHEN 'SILVER' THEN CONCAT(FLOOR(50000 + MOD(p.product_id, 10) * 10000), ' KRW')
+                WHEN 'BASIC'  THEN CONCAT(FLOOR(10000 + MOD(p.product_id, 10) * 3000), ' KRW')
+                WHEN 'CARE'   THEN CONCAT(FLOOR(20000 + MOD(p.product_id, 10) * 5000), ' KRW')
+                ELSE CONCAT(FLOOR(30000 + MOD(p.product_id, 10) * 5000), ' KRW')
+            END
+
+        -- INS : 보장유형
+        WHEN t.option_name = 'coverage_type' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '종신/상속/3대질환'
+                WHEN 'GOLD'   THEN '건강/암/뇌혈관'
+                WHEN 'SILVER' THEN '암/실손/가족보장'
+                WHEN 'BASIC'  THEN ELT(1 + MOD(p.product_id, 4), '실손', '운전자', '치아', '재해')
+                WHEN 'CARE'   THEN '펫의료/펫상해'
+                ELSE '건강'
+            END
+
+        -- INS : 보장금액 (등급 높을수록 큼)
+        WHEN t.option_name = 'coverage_amount' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '1,000,000,000 KRW'
+                WHEN 'GOLD'   THEN '300,000,000 KRW'
+                WHEN 'SILVER' THEN '100,000,000 KRW'
+                WHEN 'BASIC'  THEN '50,000,000 KRW'
+                WHEN 'CARE'   THEN '20,000,000 KRW'
+                ELSE '50,000,000 KRW'
+            END
+
+        -- INS : 가입연령
+        WHEN t.option_name = 'join_age_range' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '40-70'
+                WHEN 'GOLD'   THEN '30-65'
+                WHEN 'SILVER' THEN '20-60'
+                WHEN 'BASIC'  THEN '0-80'
+                ELSE '20-60'
+            END
+
+        -- INS : 연금개시연령
+        WHEN t.option_name = 'pension_start_age' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '55'
+                WHEN 'GOLD'   THEN '60'
+                WHEN 'SILVER' THEN '65'
+                WHEN 'BASIC'  THEN '65'
+                ELSE '60'
+            END
+
+        -- INS : 세제혜택
+        WHEN t.option_name = 'tax_benefit' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN 'Y'
+                WHEN 'GOLD'   THEN 'Y'
+                WHEN 'SILVER' THEN 'Y'
+                ELSE 'N'
+            END
+
+        -- ONLINE INS : 모바일 가입
+        WHEN t.option_name = 'mobile_join' THEN 'Y'
+
+        -- ONLINE INS : 간편심사
+        WHEN t.option_name = 'simple_underwriting' THEN
+            CASE p.target_grade
+                WHEN 'BASIC'  THEN 'Y'
+                WHEN 'CARE'   THEN 'Y'
+                ELSE 'N'
+            END
+
+        -- ONLINE INS : 보장기간
+        WHEN t.option_name = 'coverage_period' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '종신'
+                WHEN 'GOLD'   THEN '20년'
+                WHEN 'SILVER' THEN '10년'
+                WHEN 'BASIC'  THEN ELT(1 + MOD(p.product_id, 4), '1일', '7일', '30일', '1년')
+                WHEN 'CARE'   THEN '1년'
+                ELSE '10년'
+            END
+
+        -- =======================================================
+        -- HEALTHCARE : 서비스 채널 (등급 높을수록 풀서비스)
+        -- =======================================================
+        WHEN t.option_name = 'service_channel' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN 'CENTER'
+                WHEN 'GOLD'   THEN 'HYBRID'
+                WHEN 'SILVER' THEN 'HYBRID'
+                WHEN 'BASIC'  THEN 'APP'
+                WHEN 'CARE'   THEN 'APP'
+                ELSE 'APP'
+            END
+
+        -- HEALTHCARE : 건강데이터 연동
+        WHEN t.option_name = 'health_sync' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN 'hospital'
+                WHEN 'GOLD'   THEN 'hospital'
+                ELSE 'wearable'
+            END
+
+        -- HEALTHCARE : 검진유형 (등급 높을수록 정밀검진)
+        WHEN t.option_name = 'checkup_type' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN '프리미엄검진'
+                WHEN 'GOLD'   THEN '종합검진'
+                WHEN 'SILVER' THEN '암검진'
+                WHEN 'BASIC'  THEN '기본검진'
+                ELSE '유전자검사'
+            END
+
+        -- HEALTHCARE : AI 리포트
+        WHEN t.option_name = 'ai_report' THEN
+            CASE p.target_grade
+                WHEN 'BASIC'  THEN 'N'
+                ELSE 'Y'
+            END
+
+        -- WELLNESS : 코칭 주기 (등급 높을수록 자주)
+        WHEN t.option_name = 'coaching_cycle' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN 'DAILY'
+                WHEN 'GOLD'   THEN 'WEEKLY'
+                WHEN 'SILVER' THEN 'WEEKLY'
+                WHEN 'BASIC'  THEN 'MONTHLY'
+                WHEN 'CARE'   THEN 'WEEKLY'
+                ELSE 'WEEKLY'
+            END
+
+        -- WELLNESS : 웨어러블 연동
+        WHEN t.option_name = 'wearable_sync' THEN 'Y'
+
+        -- WELLNESS : 건강 리워드 포인트
+        WHEN t.option_name = 'reward_point' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN CONCAT(FLOOR(10000 + MOD(p.product_id, 10) * 1000), ' POINT')
+                WHEN 'GOLD'   THEN CONCAT(FLOOR(5000 + MOD(p.product_id, 10) * 500), ' POINT')
+                WHEN 'SILVER' THEN CONCAT(FLOOR(2000 + MOD(p.product_id, 10) * 300), ' POINT')
+                WHEN 'BASIC'  THEN CONCAT(FLOOR(500 + MOD(p.product_id, 10) * 100), ' POINT')
+                WHEN 'CARE'   THEN CONCAT(FLOOR(3000 + MOD(p.product_id, 10) * 300), ' POINT')
+                ELSE '1000 POINT'
+            END
+
+        -- TELEMED : 상담유형
+        WHEN t.option_name = 'consulting_type' THEN
+            ELT(1 + MOD(p.product_id, 4), '의사상담', '영양상담', '운동상담', '심리상담')
+
+        -- TELEMED : 예약 필요 여부
+        WHEN t.option_name = 'reservation_required' THEN
+            CASE p.target_grade
+                WHEN 'VIP'    THEN 'N'
+                ELSE 'Y'
+            END
 
         ELSE 'N/A'
     END AS option_value
@@ -342,3 +610,14 @@ GROUP BY
 ORDER BY c.company_code;
 
 
+-- 등급별 카드 연회비 차등 확인 (예시 검증)
+SELECT
+    p.target_grade,
+    o.option_value AS annual_fee,
+    COUNT(*) AS cnt
+FROM product_option o
+JOIN product_master p
+  ON o.product_id = p.product_id
+WHERE o.option_name = 'annual_fee'
+GROUP BY p.target_grade, o.option_value
+ORDER BY p.target_grade, o.option_value;

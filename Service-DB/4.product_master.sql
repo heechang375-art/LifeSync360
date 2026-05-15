@@ -58,12 +58,11 @@ SELECT
     END AS product_name,
 
     CONCAT(
-        'LifeSync360 AI 추천 플랫폼 상품 - ',
-        b.base_product_name,
-        ' / ',
-        v.variant_desc,
-        ' / 테마: ',
-        b.product_theme
+        COALESCE(b.base_description, ''),
+        ' | ',
+        v.variant_name,
+        ' - ',
+        v.variant_desc
     ) AS description,
 
     CASE

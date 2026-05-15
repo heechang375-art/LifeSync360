@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS base_product_pool
     category_code       VARCHAR(30) NOT NULL,
 
     base_product_name   VARCHAR(200) NOT NULL,
+    base_description    TEXT,
 
     base_grade          VARCHAR(20),
     base_min_score      DECIMAL(8,2),
