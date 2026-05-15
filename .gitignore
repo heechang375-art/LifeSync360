@@ -21,3 +21,9 @@ venv/
 *.zip
 ~$*
 files_extract/
+
+# 작업용 외부 IaC (별도 git repo로 관리)
+Aws_iac/
+
+# 스크린샷 (작업 증빙은 별도 보존)
+스크린샷*.png
