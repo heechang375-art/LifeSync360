@@ -4,8 +4,8 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",
   "memory": "1024",
-  "executionRoleArn": "arn:aws:iam::354493396671:role/lifesync-dev-21-lifesync-ecs-exist-EcsExecutionRole-A2eQoeWGranp",
-  "taskRoleArn": "arn:aws:iam::354493396671:role/lifesync-dev-21-lifesync-ecs-existing-v-EcsTaskRole-3EkSGfTWb9ZF",
+  "executionRoleArn": "arn:aws:iam::732264765472:role/lifesync-dev-21-lifesync-ecs-exist-EcsExecutionRole-A2eQoeWGranp",
+  "taskRoleArn": "arn:aws:iam::732264765472:role/lifesync-dev-21-lifesync-ecs-existing-v-EcsTaskRole-3EkSGfTWb9ZF",
   "containerDefinitions": [
     {
       "name": "app",
@@ -28,7 +28,7 @@
       "secrets": [
         {
           "name": "JWT_SECRET",
-          "valueFrom": "arn:aws:ssm:ap-northeast-2:354493396671:parameter/lifesync360/jwt-secret"
+          "valueFrom": "arn:aws:ssm:ap-northeast-2:732264765472:parameter/lifesync360/jwt-secret"
         }
       ],
       "logConfiguration": {
