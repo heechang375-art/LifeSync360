@@ -118,3 +118,25 @@ MOCK_TAB_CLICKS = [
     {'event_target': '보험', 'count': 54},
     {'event_target': '마이', 'count': 31},
 ]
+
+# ── 데이터 정합 / 적재 현황 (A-1-1) ─────────────────────────────
+# 운영: onprem 5개 핵심 테이블 + Aurora + DynamoDB row count
+DOMAINS = ['BANK', 'CARD', 'INSURANCE', 'SECURITIES', 'HEALTHCARE', 'HOSPITAL', 'WEARABLE']
+
+INTEGRITY_TABLE_ROWS = [
+    {'table': 'users',                   'rows':   998_421, 'expected': 1_000_000, 'source': 'onprem'},
+    {'table': 'master_customer',         'rows': 1_000_000, 'expected': 1_000_000, 'source': 'onprem'},
+    {'table': 'customer_pii_secure',     'rows':   999_873, 'expected': 1_000_000, 'source': 'onprem'},
+    {'table': 'customer_360_profile',    'rows':   997_512, 'expected': 1_000_000, 'source': 'onprem'},
+    {'table': 'customer_identity_map',   'rows': 4_823_192, 'expected': 5_000_000, 'source': 'onprem'},
+    {'table': 'consent',                 'rows': 7_658_421, 'expected': 8_000_000, 'source': 'onprem'},
+    {'table': 'token_map',               'rows':   998_421, 'expected': 1_000_000, 'source': 'onprem'},
+    {'table': 'lifesync_customer_result','rows':   996_341, 'expected': 1_000_000, 'source': 'dynamodb'},
+]
+
+INTEGRITY_TOKEN_MAP_COVERAGE = {
+    'master_total':    1_000_000,
+    'token_map_total':   998_421,
+    'coverage_pct':       99.84,
+}
+

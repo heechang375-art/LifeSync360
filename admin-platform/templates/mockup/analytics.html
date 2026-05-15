@@ -1,0 +1,99 @@
+{% extends 'base.html' %}
+{% block title %}분석 데이터 시안{% endblock %}
+{% block page_title %}분석 데이터 (시안){% endblock %}
+{% block content %}
+
+<div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 10px 16px; margin-bottom: 20px; border-radius: 4px; font-size: 12px; color: #78350f;">
+    🎨 <strong>시안 (mockup)</strong> — 정식 화면 아님. 모든 데이터 임의. 기존 <a href="{{ url_for('data_integrity') }}" style="color: #3b82f6;">데이터 정합 화면</a>에 아래 3개 카드 추가로 통합 예정.
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px;">
+
+    <!-- PII 보호 현황 (A-1-4) -->
+    <div style="background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+        <div style="font-size: 13px; color: #64748b; font-weight: 600; margin-bottom: 12px;">🛡 PII 보호 현황</div>
+        <div style="margin-bottom: 12px;">
+            <div style="font-size: 11px; color: #94a3b8; margin-bottom: 6px;">PII 컬럼별 채워진 비율</div>
+            {% for col in pii.pii_columns %}
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
+                <span style="width: 90px; font-size: 11px; font-family: monospace; color: #475569;">{{ col.column }}</span>
+                <div style="flex: 1; background: #f1f5f9; border-radius: 4px; height: 10px; overflow: hidden;">
+                    <div style="height: 100%; background: {% if col.filled_pct >= 99 %}#16a34a{% elif col.filled_pct >= 95 %}#f59e0b{% else %}#dc2626{% endif %}; width: {{ col.filled_pct }}%;"></div>
+                </div>
+                <span style="font-size: 11px; color: #64748b; min-width: 50px; text-align: right;">{{ col.filled_pct }}%</span>
+            </div>
+            {% endfor %}
+        </div>
+        <div style="border-top: 1px solid #f1f5f9; padding-top: 10px; font-size: 12px; color: #475569;">
+            <div>pii_token 패턴 무결성: <strong style="color: #16a34a;">{{ pii.pii_token_pattern_ok }}%</strong></div>
+            <div>token_map UNIQUE: <strong style="color: {% if pii.token_map_unique %}#16a34a{% else %}#dc2626{% endif %};">{% if pii.token_map_unique %}OK{% else %}위반{% endif %}</strong></div>
+            <div>orphan row 수: <strong style="color: {% if pii.orphan_count == 0 %}#16a34a{% else %}#dc2626{% endif %};">{{ pii.orphan_count }}</strong></div>
+        </div>
+    </div>
+
+    <!-- AI 모델 메타 (C-7) -->
+    <div style="background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+        <div style="font-size: 13px; color: #64748b; font-weight: 600; margin-bottom: 12px;">🧠 분석 모델 메타</div>
+        <div style="font-size: 13px;">
+            <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #f1f5f9;">
+                <span style="color: #64748b;">모델명</span>
+                <span style="font-family: monospace; color: #1e293b;">{{ ai_model.model_name }}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #f1f5f9;">
+                <span style="color: #64748b;">버전</span>
+                <span style="font-weight: 600; color: #3b82f6;">{{ ai_model.version }}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #f1f5f9;">
+                <span style="color: #64748b;">학습일</span>
+                <span style="font-family: monospace; color: #475569; font-size: 12px;">{{ ai_model.trained_at }}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #f1f5f9;">
+                <span style="color: #64748b;">알고리즘</span>
+                <span style="font-size: 12px; color: #475569;">{{ ai_model.algorithm }}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #f1f5f9;">
+                <span style="color: #64748b;">AUC</span>
+                <span style="font-weight: 600; color: #16a34a;">{{ ai_model.auc }}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #f1f5f9;">
+                <span style="color: #64748b;">24h 추론</span>
+                <span style="font-weight: 600;">{{ '{:,}'.format(ai_model.inference_count_24h) }}</span>
+            </div>
+            <div style="margin-top: 8px; font-size: 11px; color: #94a3b8;">입력 feature ({{ ai_model.features | length }}개):</div>
+            <div style="margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px;">
+                {% for f in ai_model.features %}
+                <span style="font-size: 10px; padding: 2px 6px; background: #f1f5f9; border-radius: 4px; color: #475569; font-family: monospace;">{{ f }}</span>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- 분석 추세 (간단 시계열) -->
+    <div style="background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+        <div style="font-size: 13px; color: #64748b; font-weight: 600; margin-bottom: 12px;">📈 분석 건수 추세 (최근 7일)</div>
+        {% set max_count = analysis_trend | map(attribute='count') | max %}
+        {% set min_count = analysis_trend | map(attribute='count') | min %}
+        {% set range_v = max_count - min_count if max_count > min_count else 1 %}
+        <div style="display: flex; align-items: flex-end; gap: 6px; height: 140px; padding: 8px 0; border-bottom: 1px solid #f1f5f9;">
+            {% for d in analysis_trend %}
+            {% set h = ((d.count - min_count) / range_v * 80 + 20) | round | int %}
+            <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                <div style="font-size: 10px; color: #64748b; font-family: monospace;">{{ (d.count / 1000) | round | int }}K</div>
+                <div style="width: 100%; height: {{ h }}%; background: linear-gradient(180deg, #6366f1 0%, #8b5cf6 100%); border-radius: 4px 4px 0 0;"></div>
+                <div style="font-size: 10px; color: #94a3b8; font-family: monospace;">{{ d.date }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        <div style="margin-top: 8px; font-size: 11px; color: #64748b; display: flex; justify-content: space-between;">
+            <span>min {{ '{:,}'.format(min_count) }}</span>
+            <span>max {{ '{:,}'.format(max_count) }}</span>
+        </div>
+    </div>
+
+</div>
+
+<div style="margin-top: 20px; padding: 12px 16px; background: #f8fafc; border-left: 4px solid #6366f1; border-radius: 4px; font-size: 12px; color: #475569;">
+    💡 본격 구현 시: <strong>PII</strong> = onprem <code>customer_pii_secure + pii_token + token_map</code> 집계 / <strong>AI 모델 메타</strong> = SageMaker Model Registry 또는 자체 <code>ai_model_version</code> 테이블 (C-7) / <strong>분석 추세</strong> = DynamoDB <code>update_time</code> GROUP BY DATE
+</div>
+
+{% endblock %}

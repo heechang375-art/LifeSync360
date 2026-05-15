@@ -6,41 +6,11 @@
 <div class="sidebar-sep"></div>
 <div class="sidebar-section">섹션</div>
 <div class="sidebar-sub-item active" onclick="showTab(this, 'grade')">등급 분포</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'recent')">최근 분석</div>
 <div class="sidebar-sub-item" onclick="showTab(this, 'campaign')">활성 캠페인</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'recommend')">최근 추천</div>
 <div class="sidebar-sub-item" onclick="showTab(this, 'funnel')">추천 전환 현황</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'behavior')">행동 현황</div>
 {% endblock %}
 
 {% block content %}
-<div class="stat-grid">
-    <div class="stat-card">
-        <div class="stat-label">전체 유저</div>
-        <div class="stat-value">{{ total_users }}</div>
-        <div class="stat-sub">등록 회원 수</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">분석 완료</div>
-        <div class="stat-value">{{ analyzed }}</div>
-        <div class="stat-sub">GCP 분석 데이터 보유</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">미분석</div>
-        <div class="stat-value">{{ no_data }}</div>
-        <div class="stat-sub">아직 분석 데이터 없음</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">평균 종합점수</div>
-        <div class="stat-value">{{ avg_score }}</div>
-        <div class="stat-sub">분석 완료 유저 기준</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">동의율</div>
-        <div class="stat-value">{{ consent_rate }}%</div>
-        <div class="stat-sub">전체 동의 항목 기준</div>
-    </div>
-</div>
 
 <div class="detail-content">
 
@@ -62,52 +32,6 @@
                 </div>
                 {% endfor %}
             </div>
-        </div>
-    </div>
-
-    <!-- 최근 분석 현황 -->
-    <div id="sec-recent" class="detail-section">
-        <div class="card">
-            <div class="card-title">최근 분석 현황</div>
-            {% if recent %}
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>유저</th>
-                            <th>등급</th>
-                            <th>종합점수</th>
-                            <th>분석 시각</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for item in recent %}
-                        {% set matched_user = recent_users.get(item.global_id) %}
-                        <tr>
-                            <td>
-                                {% if matched_user %}
-                                <a class="table-link" href="{{ url_for('user_detail', global_id=matched_user.global_id) }}">
-                                    <strong>{{ matched_user.name }}</strong>
-                                </a>
-                                <div class="mono" style="margin-top:2px;">{{ item.global_id }}</div>
-                                {% else %}
-                                <span class="mono">{{ item.global_id }}</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% set g = item.get('dynamic_grade', '-') | lower %}
-                                <span class="badge badge-{{ g }}">{{ item.get('dynamic_grade', '-') }}</span>
-                            </td>
-                            <td><strong>{{ item.get('dynamic_score', '-') }}</strong></td>
-                            <td class="mono">{{ item.get('update_time', '-') }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            <p style="color:#94a3b8; font-size:14px;">분석 데이터가 없습니다.</p>
-            {% endif %}
         </div>
     </div>
 
@@ -143,48 +67,6 @@
             {% endif %}
         </div>
     </div>
-
-    <!-- 최근 추천 현황 -->
-    <div id="sec-recommend" class="detail-section">
-        <div class="card">
-            <div class="card-title">최근 추천 현황</div>
-            {% if recent_recommends %}
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>유저</th>
-                            <th>상품명</th>
-                            <th>상태</th>
-                            <th>추천 시각</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for r in recent_recommends %}
-                        <tr>
-                            <td><strong>{{ r.name }}</strong></td>
-                            <td>{{ r.product_name }}</td>
-                            <td>
-                                {% if r.purchased_flag == 'Y' %}
-                                <span class="badge badge-purchased">구매완료</span>
-                                {% elif r.clicked_flag == 'Y' %}
-                                <span class="badge badge-clicked">클릭</span>
-                                {% else %}
-                                <span class="badge badge-recommended">추천됨</span>
-                                {% endif %}
-                            </td>
-                            <td class="mono">{{ r.recommended_at }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            <p style="color:#94a3b8; font-size:14px;">추천 내역이 없습니다.</p>
-            {% endif %}
-        </div>
-    </div>
-
 
     <!-- 추천 전환 현황 -->
     <div id="sec-funnel" class="detail-section">
@@ -245,48 +127,6 @@
         </div>
     </div>
 
-    <!-- 행동 현황 -->
-    <div id="sec-behavior" class="detail-section">
-        <div class="two-col">
-            <div class="card">
-                <div class="card-title">상품 조회 TOP 5</div>
-                {% if top_viewed %}
-                {% set max_views = top_viewed | map(attribute='count') | max %}
-                {% for item in top_viewed %}
-                <div class="view-rank-row">
-                    <span class="view-rank-num">{{ loop.index }}</span>
-                    <span class="view-rank-name">{{ item.event_target }}</span>
-                    <div class="view-rank-bar">
-                        <div class="view-rank-bar-fill" style="width:{{ (item.count / max_views * 100) | round | int }}%"></div>
-                    </div>
-                    <span class="view-rank-count">{{ item.count }}</span>
-                </div>
-                {% endfor %}
-                {% else %}
-                <p style="color:#94a3b8; font-size:14px;">데이터가 없습니다.</p>
-                {% endif %}
-            </div>
-            <div class="card">
-                <div class="card-title">탭별 클릭 현황</div>
-                {% if tab_clicks %}
-                {% set max_clicks = tab_clicks | map(attribute='count') | max %}
-                <div class="grade-dist">
-                    {% for item in tab_clicks %}
-                    <div class="grade-dist-row">
-                        <span class="grade-dist-name">{{ item.event_target }}</span>
-                        <div class="grade-dist-track">
-                            <div class="grade-dist-fill" style="width:{{ (item.count / max_clicks * 100) | round | int }}%; background:#64748b;"></div>
-                        </div>
-                        <span class="grade-dist-cnt">{{ item.count }}</span>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <p style="color:#94a3b8; font-size:14px;">데이터가 없습니다.</p>
-                {% endif %}
-            </div>
-        </div>
-    </div>
 
 </div>
 
@@ -303,5 +143,6 @@ function filterFunnel(val) {
         tr.style.display = (!val || tr.dataset.affiliate === val) ? '' : 'none';
     });
 }
+
 </script>
 {% endblock %}

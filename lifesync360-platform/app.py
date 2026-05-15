@@ -52,7 +52,7 @@ GRADE_SCORE_MAP = {
 
 # Service-DB 등급 체계: VIP > GOLD > SILVER > BASIC, CARE는 건강 특화
 GRADE_BENEFITS = {
-    'VIP': {'color': 'platinum', 'desc': '최상위 고객 전용 혜택', 'benefits': [
+    'VIP': {'color': 'vip', 'desc': '최상위 고객 전용 혜택', 'benefits': [
         '보험료 최대 15% 할인', '포인트 3배 적립', 'PB 전담 매니저 배정',
         '공항 라운지 무제한', 'VIP 종합 건강검진 무료',
     ]},

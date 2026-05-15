@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+{% block title %}개요 + 서버상태 시안{% endblock %}
+{% block page_title %}개요 + 서버 상태 통합 (시안){% endblock %}
+{% block content %}
+
+<div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 10px 16px; margin-bottom: 20px; border-radius: 4px; font-size: 12px; color: #78350f;">
+    🎨 <strong>시안 (mockup)</strong> — 정식 화면 아님. 모든 데이터 임의. 운영 시: 운영 모니터링 = CloudWatch / 외부 헬스체크, 인프라 = AWS API.
+</div>
+
+<!-- 운영 모니터링 stat 4개 -->
+<div class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-label">⏱ 마지막 ETL</div>
+        <div class="stat-value" style="font-size: 22px;">{{ etl_last.completed_at[5:16] }}</div>
+        <div class="stat-sub">{{ etl_last.job_name }} · {{ etl_last.duration_sec }}초</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">📅 다음 배치 예정</div>
+        <div class="stat-value" style="font-size: 22px;">{{ etl_next.scheduled_at[5:16] }}</div>
+        <div class="stat-sub">{{ etl_next.job_name }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">🔌 외부 연동</div>
+        <div class="stat-value" style="color: {% if ext_ok == ext_total %}#16a34a{% else %}#f59e0b{% endif %};">{{ ext_ok }}/{{ ext_total }}</div>
+        <div class="stat-sub">계열사 API 헬스</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">🚨 오류 (24h)</div>
+        <div class="stat-value" style="color: {% if recent_errors | length == 0 %}#16a34a{% else %}#dc2626{% endif %};">{{ recent_errors | length }}</div>
+        <div class="stat-sub">{% if recent_errors %}{{ recent_errors[0].system }} · {{ recent_errors[0].severity }}{% else %}이상 없음{% endif %}</div>
+    </div>
+</div>
+
+<!-- 인프라 카드 -->
+<div style="margin-top: 24px;">
+    <div style="font-size: 14px; font-weight: 700; color: #1e293b; margin-bottom: 12px; padding: 0 4px;">🖥 인프라 상태</div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+        {% for i in infra %}
+        <div style="background: #fff; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-left: 3px solid {% if i.status == 'OK' %}#16a34a{% elif i.status == 'WARN' %}#f59e0b{% else %}#dc2626{% endif %};">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-size: 13px; font-weight: 600; color: #1e293b;">{{ i.icon }} {{ i.name }}</span>
+                <span style="font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px; color: #fff; background: {% if i.status == 'OK' %}#16a34a{% elif i.status == 'WARN' %}#f59e0b{% else %}#dc2626{% endif %};">{{ i.status }}</span>
+            </div>
+            <div style="font-size: 11px; color: #475569; margin-bottom: 2px;">{{ i.detail }}</div>
+            <div style="font-size: 11px; color: #94a3b8; font-family: monospace;">{{ i.metric }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- 외부 시스템 상세 -->
+<div style="margin-top: 24px;">
+    <div style="font-size: 14px; font-weight: 700; color: #1e293b; margin-bottom: 12px; padding: 0 4px;">🔌 계열사 API 헬스 (7개)</div>
+    <div style="background: #fff; border-radius: 10px; padding: 12px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <thead><tr style="border-bottom: 2px solid #e2e8f0; text-align: left;"><th style="padding: 8px 16px;">시스템</th><th style="padding: 8px 16px; text-align: center;">상태</th><th style="padding: 8px 16px;">마지막 호출</th><th style="padding: 8px 16px; text-align: right;">응답</th><th style="padding: 8px 16px;">비고</th></tr></thead>
+            <tbody>
+                {% for s in ext_systems %}
+                <tr style="border-bottom: 1px solid #f1f5f9;">
+                    <td style="padding: 8px 16px; font-weight: 600;">{{ s.label }} <span style="color: #94a3b8; font-size: 11px;">({{ s.system }})</span></td>
+                    <td style="padding: 8px 16px; text-align: center;"><span style="color: {% if s.status == 'OK' %}#16a34a{% else %}#f59e0b{% endif %}; font-weight: 700;">{{ s.status }}</span></td>
+                    <td style="padding: 8px 16px; font-family: monospace; font-size: 12px; color: #64748b;">{{ s.last_call }}</td>
+                    <td style="padding: 8px 16px; text-align: right; {% if s.response_ms > 1000 %}color: #f59e0b; font-weight: 600;{% endif %}">{{ s.response_ms }}ms</td>
+                    <td style="padding: 8px 16px; font-size: 11px; color: #64748b;">{{ s.note or '' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 최근 오류 -->
+<div style="margin-top: 24px;">
+    <div style="font-size: 14px; font-weight: 700; color: #1e293b; margin-bottom: 12px; padding: 0 4px;">🚨 최근 24시간 오류</div>
+    <div style="background: #fff; border-radius: 10px; padding: 12px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+        {% if recent_errors %}
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <thead><tr style="border-bottom: 2px solid #e2e8f0; text-align: left;"><th style="padding: 8px 16px;">시각</th><th style="padding: 8px 16px;">시스템</th><th style="padding: 8px 16px;">레벨</th><th style="padding: 8px 16px;">메시지</th></tr></thead>
+            <tbody>
+                {% for e in recent_errors %}
+                <tr style="border-bottom: 1px solid #f1f5f9;">
+                    <td style="padding: 8px 16px; font-family: monospace; font-size: 12px;">{{ e.time }}</td>
+                    <td style="padding: 8px 16px; font-weight: 600;">{{ e.system }}</td>
+                    <td style="padding: 8px 16px;"><span style="color: {% if e.severity == 'ERROR' %}#dc2626{% else %}#f59e0b{% endif %}; font-weight: 700;">{{ e.severity }}</span></td>
+                    <td style="padding: 8px 16px;">{{ e.message }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="padding: 16px; color: #94a3b8; font-size: 13px;">24시간 내 오류 없음</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- 기존 등급/캠페인/funnel 합쳐질 영역 안내 -->
+<div style="margin-top: 24px; padding: 16px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; font-size: 12px; color: #64748b; text-align: center;">
+    ⬆ 위는 신규 영역 (운영 모니터링 + 인프라). 본격 구현 시 <a href="{{ url_for('overview') }}" style="color: #3b82f6; text-decoration: underline;">기존 개요 페이지</a>의 등급 분포 / 활성 캠페인 / 추천 전환 funnel과 통합됩니다.
+</div>
+
+{% endblock %}

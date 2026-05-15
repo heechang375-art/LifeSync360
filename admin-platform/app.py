@@ -33,6 +33,7 @@ if USE_MOCK:
         MOCK_CONSENTS, MOCK_RECOMMEND_HISTORY, MOCK_IDENTITIES,
         MOCK_CAMPAIGNS, MOCK_RECENT_RECOMMENDS,
         MOCK_PRODUCT_FUNNEL, MOCK_TOP_VIEWED, MOCK_TAB_CLICKS,
+        DOMAINS, INTEGRITY_TABLE_ROWS, INTEGRITY_TOKEN_MAP_COVERAGE,
     )
 
 
@@ -370,6 +371,93 @@ def user_detail(global_id):
         consents=consents,
         recommend_history=recommend_history,
         identities=identities,
+    )
+
+
+# ── Mockup 시안 (정식 화면 아님 · mock 데이터 임의) ──
+from mockup_data import (
+    MOCKUP_ETL_LAST_RUN, MOCKUP_ETL_NEXT, MOCKUP_EXTERNAL_SYSTEMS, MOCKUP_RECENT_ERRORS,
+    MOCKUP_INFRA, MOCKUP_PII_STATUS, MOCKUP_AI_MODEL, MOCKUP_ANALYSIS_TREND, MOCKUP_CUSTOMER,
+)
+
+
+@app.route('/mockup/overview')
+@login_required
+def mockup_overview():
+    ext_ok = sum(1 for s in MOCKUP_EXTERNAL_SYSTEMS if s['status'] == 'OK')
+    return render_template('mockup/overview.html',
+        active='mockup_overview',
+        etl_last=MOCKUP_ETL_LAST_RUN,
+        etl_next=MOCKUP_ETL_NEXT,
+        ext_systems=MOCKUP_EXTERNAL_SYSTEMS,
+        ext_ok=ext_ok,
+        ext_total=len(MOCKUP_EXTERNAL_SYSTEMS),
+        recent_errors=MOCKUP_RECENT_ERRORS,
+        infra=MOCKUP_INFRA,
+    )
+
+
+@app.route('/mockup/analytics')
+@login_required
+def mockup_analytics():
+    return render_template('mockup/analytics.html',
+        active='mockup_analytics',
+        pii=MOCKUP_PII_STATUS,
+        ai_model=MOCKUP_AI_MODEL,
+        analysis_trend=MOCKUP_ANALYSIS_TREND,
+    )
+
+
+@app.route('/mockup/customer-data')
+@login_required
+def mockup_customer_data():
+    return render_template('mockup/customer_data.html',
+        active='mockup_customer',
+        c=MOCKUP_CUSTOMER,
+    )
+
+
+# ── Data Integrity (A-1-1) ────────────────────────────
+@app.route('/data-integrity')
+@login_required
+def data_integrity():
+    if USE_MOCK:
+        table_rows     = INTEGRITY_TABLE_ROWS
+        token_coverage = INTEGRITY_TOKEN_MAP_COVERAGE
+
+        consent_by_domain = {d: {'Y': 0, 'N': 0} for d in DOMAINS}
+        for user_consents in MOCK_CONSENTS.values():
+            for c in user_consents:
+                if c['domain'] in consent_by_domain:
+                    consent_by_domain[c['domain']][c['consent_flag']] += 1
+
+        mapping_by_domain = {d: 0 for d in DOMAINS}
+        for user_ids in MOCK_IDENTITIES.values():
+            for m in user_ids:
+                if m['company_id'] in mapping_by_domain:
+                    mapping_by_domain[m['company_id']] += 1
+
+        total_mappings = sum(len(v) for v in MOCK_IDENTITIES.values())
+        avg_mapping    = round(total_mappings / max(1, len(MOCK_IDENTITIES)), 2)
+    else:
+        # 운영: onprem Lambda data_integrity_summary + DynamoDB
+        try:
+            data = _call_onprem('data_integrity_summary')
+            table_rows        = data.get('table_rows', [])
+            token_coverage    = data.get('token_coverage', {})
+            consent_by_domain = data.get('consent_by_domain', {})
+            mapping_by_domain = data.get('mapping_by_domain', {})
+            avg_mapping       = data.get('avg_mapping', 0)
+        except Exception:
+            table_rows, token_coverage, consent_by_domain, mapping_by_domain, avg_mapping = [], {}, {}, {}, 0
+
+    return render_template('data_integrity.html',
+        active='data_integrity',
+        table_rows=table_rows,
+        token_coverage=token_coverage,
+        consent_by_domain=consent_by_domain,
+        mapping_by_domain=mapping_by_domain,
+        avg_mapping=avg_mapping,
     )
 
 

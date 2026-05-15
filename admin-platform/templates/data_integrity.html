@@ -1,0 +1,92 @@
+{% extends 'base.html' %}
+{% block title %}데이터 정합 – Admin{% endblock %}
+{% block page_title %}데이터 정합 / 적재 현황{% endblock %}
+{% block content %}
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">
+
+    <div style="background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); grid-column: 1 / -1;">
+        <div style="font-size: 13px; color: #64748b; font-weight: 600; margin-bottom: 12px;">📊 핵심 테이블 적재량</div>
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <thead>
+                <tr style="border-bottom: 2px solid #e2e8f0; text-align: left;">
+                    <th style="padding: 8px;">테이블</th>
+                    <th style="padding: 8px; text-align: right;">적재 row</th>
+                    <th style="padding: 8px; text-align: right;">기대 row</th>
+                    <th style="padding: 8px; text-align: right;">적재율</th>
+                    <th style="padding: 8px;">출처</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in table_rows %}
+                {% set pct = (row.rows / row.expected * 100) | round(2) %}
+                <tr style="border-bottom: 1px solid #f1f5f9;">
+                    <td style="padding: 8px; font-family: monospace; font-size: 12px;">{{ row.table }}</td>
+                    <td style="padding: 8px; text-align: right;">{{ '{:,}'.format(row.rows) }}</td>
+                    <td style="padding: 8px; text-align: right; color: #94a3b8;">{{ '{:,}'.format(row.expected) }}</td>
+                    <td style="padding: 8px; text-align: right;">
+                        <span style="font-weight: 600; color: {% if pct >= 99 %}#16a34a{% elif pct >= 95 %}#f59e0b{% else %}#dc2626{% endif %};">{{ pct }}%</span>
+                    </td>
+                    <td style="padding: 8px; font-size: 11px; color: #64748b;">{{ row.source }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div style="background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+        <div style="font-size: 13px; color: #64748b; font-weight: 600; margin-bottom: 12px;">🔐 token_map 발급률</div>
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;">
+            <span style="font-size: 32px; font-weight: 700; color: #16a34a;">{{ token_coverage.coverage_pct }}%</span>
+        </div>
+        <div style="font-size: 12px; color: #64748b;">
+            발급 <strong>{{ '{:,}'.format(token_coverage.token_map_total) }}</strong> / 총 master <strong>{{ '{:,}'.format(token_coverage.master_total) }}</strong>
+        </div>
+        <div style="margin-top: 8px; font-size: 11px; color: #94a3b8;">PII 분리 토큰화 무결성 지표</div>
+    </div>
+
+    <div style="background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+        <div style="font-size: 13px; color: #64748b; font-weight: 600; margin-bottom: 12px;">🔗 평균 연동 도메인</div>
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;">
+            <span style="font-size: 32px; font-weight: 700; color: #3b82f6;">{{ avg_mapping }}</span>
+            <span style="font-size: 14px; color: #64748b;">개 / 인</span>
+        </div>
+        <div style="font-size: 11px; color: #94a3b8;">한 global_id 평균 연동 계열사 수</div>
+    </div>
+
+    <div style="background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+        <div style="font-size: 13px; color: #64748b; font-weight: 600; margin-bottom: 12px;">✅ 도메인별 동의 분포 (mock)</div>
+        {% for domain, counts in consent_by_domain.items() %}
+        {% set total = counts.Y + counts.N %}
+        {% set pct = (counts.Y / total * 100) | round if total else 0 %}
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+            <span style="width: 70px; font-size: 12px; color: #475569;">{{ consent_labels.get(domain, domain) }}</span>
+            <div style="flex: 1; background: #f1f5f9; border-radius: 4px; height: 12px; overflow: hidden;">
+                <div style="height: 100%; background: #10b981; width: {{ pct }}%;"></div>
+            </div>
+            <span style="font-size: 11px; color: #64748b; min-width: 60px; text-align: right;">{{ pct }}% (Y:{{ counts.Y }})</span>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div style="background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+        <div style="font-size: 13px; color: #64748b; font-weight: 600; margin-bottom: 12px;">🏢 도메인별 ID 매핑 분포 (mock)</div>
+        {% set max_count = mapping_by_domain.values() | max %}
+        {% for domain, count in mapping_by_domain.items() %}
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+            <span style="width: 70px; font-size: 12px; color: #475569;">{{ consent_labels.get(domain, domain) }}</span>
+            <div style="flex: 1; background: #f1f5f9; border-radius: 4px; height: 12px; overflow: hidden;">
+                <div style="height: 100%; background: #6366f1; width: {{ (count / max_count * 100) | round if max_count else 0 }}%;"></div>
+            </div>
+            <span style="font-size: 11px; color: #64748b; min-width: 30px; text-align: right;">{{ count }}</span>
+        </div>
+        {% endfor %}
+    </div>
+
+</div>
+
+<div style="background: #f8fafc; border-left: 4px solid #6366f1; padding: 12px 16px; margin-top: 20px; border-radius: 4px; font-size: 12px; color: #475569;">
+    💡 <strong>운영 모드</strong> (USE_MOCK=false): onprem Lambda <code>data_integrity_summary</code> action + DynamoDB scan으로 실시간 집계. 현재는 mock 데이터.
+</div>
+
+{% endblock %}

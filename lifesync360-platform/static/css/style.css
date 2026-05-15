@@ -9,10 +9,12 @@
     --nav-h: 64px;
     --header-h: 56px;
     --grade-platinum: #7C3AED;
+    --grade-vip: #A855F7;
     --grade-gold: #F59E0B;
     --grade-silver: #64748B;
     --grade-bronze: #F97316;
     --grade-basic: #3B82F6;
+    --grade-care: #10B981;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -59,10 +61,12 @@ body {
     color: #fff;
 }
 .grade-platinum { background: var(--grade-platinum); }
+.grade-vip      { background: var(--grade-vip); }
 .grade-gold     { background: var(--grade-gold); }
 .grade-silver   { background: var(--grade-silver); }
 .grade-bronze   { background: var(--grade-bronze); }
 .grade-basic    { background: var(--grade-basic); }
+.grade-care     { background: var(--grade-care); }
 
 /* 콘텐츠 */
 .content {
@@ -304,10 +308,12 @@ body {
 }
 .ladder-item.current { opacity: 1; }
 .ladder-item.grade-platinum { background: var(--grade-platinum); }
+.ladder-item.grade-vip      { background: var(--grade-vip); }
 .ladder-item.grade-gold     { background: var(--grade-gold); }
 .ladder-item.grade-silver   { background: var(--grade-silver); }
 .ladder-item.grade-bronze   { background: var(--grade-bronze); }
 .ladder-item.grade-basic    { background: var(--grade-basic); }
+.ladder-item.grade-care     { background: var(--grade-care); }
 
 .btn-outline {
     width: 100%;
@@ -667,10 +673,12 @@ body {
     white-space: nowrap;
 }
 .ladder-btn.grade-platinum { background: var(--grade-platinum); }
+.ladder-btn.grade-vip      { background: var(--grade-vip); }
 .ladder-btn.grade-gold     { background: var(--grade-gold); }
 .ladder-btn.grade-silver   { background: var(--grade-silver); }
 .ladder-btn.grade-bronze   { background: var(--grade-bronze); }
 .ladder-btn.grade-basic    { background: var(--grade-basic); }
+.ladder-btn.grade-care     { background: var(--grade-care); }
 
 /* MY 탭 세그먼트 컨트롤 */
 .my-seg-bar {

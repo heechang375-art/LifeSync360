@@ -21,13 +21,35 @@
                 </svg>
                 개요
             </a>
-            <a class="nav-item {% if active == 'users' %}active{% endif %}" href="{{ url_for('users') }}">
+            <a class="nav-item {% if active == 'data_integrity' %}active{% endif %}" href="{{ url_for('data_integrity') }}">
                 <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                    <circle cx="9" cy="7" r="4"/>
-                    <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+                    <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                    <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/>
+                    <path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/>
                 </svg>
-                유저 관리
+                데이터 정합
+            </a>
+            <div style="margin: 16px 18px 8px; border-top: 1px dashed #cbd5e1; padding-top: 12px; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">시안 (mockup)</div>
+            <a class="nav-item {% if active == 'mockup_overview' %}active{% endif %}" href="/mockup/overview">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/>
+                    <rect x="3" y="14" width="7" height="7"/><rect x="14" y="11" width="7" height="10"/>
+                </svg>
+                개요 + 서버상태
+            </a>
+            <a class="nav-item {% if active == 'mockup_analytics' %}active{% endif %}" href="/mockup/analytics">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 3v18h18"/>
+                    <polyline points="7,15 11,10 14,13 20,5"/>
+                </svg>
+                분석 데이터
+            </a>
+            <a class="nav-item {% if active == 'mockup_customer' %}active{% endif %}" href="/mockup/customer-data">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="8" r="4"/>
+                    <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+                </svg>
+                고객 데이터
             </a>
             {% block sidebar_extra %}{% endblock %}
         </nav>
