@@ -1311,3 +1311,59 @@ aws ssm get-parameter \
 | Aurora users_ref 동기화 테이블 구축 (어드민 유저목록 이름/이메일, total_users 정확도) | 개발 | on-prem users → Aurora 주기 동기화 |
 | /api/my-products 운영 연결 | 개발 | Aurora consent 테이블 체크 |
 | upgrade_actions 운영 연결 | 개발 | DynamoDB/Aurora 실데이터 ctx |
+
+---
+
+## 2026-05-15 ~ 2026-05-16 — 732 계정 전환 + admin UI 리뉴얼
+
+### 작업 요약
+
+**1. 354 → 732 신규 계정 전환**
+- `354-mockup-snapshot` 브랜치 + tag 로 354 상태 스냅샷 보존
+- `params/data.env` 의 모든 S3 bucket 이름에 `-732264765472` suffix (전역 unique 충돌 회피)
+- `taskdef.json` (platform + admin) execution/task Role ARN hash 정정 (`Dm8CCIe7mct9` / `88cLRd8Eqk8y`)
+- GitHub Actions `platform.yml` mirror-to-codecommit `if: false` (354 GitHub Secrets 잔존 — 732 키 재발급 후 복원 예정)
+
+**2. 토큰 에러 근본 원인 수정 (IaC)**
+- 증상: ECS task 부팅 시 `invalid token` (SSM SecureString fetch 실패)
+- 원인: ExecutionRole 에 `ssm:GetParameters` 만 있고 `kms:Decrypt` 누락 → SecureString 복호화 불가
+- 수정 파일:
+  - `21-lifesync-ecs-existing-vpc.yaml` — ExecutionRole inline policy 에 `kms:Decrypt` (Condition: `kms:ViaService=ssm.${REGION}.amazonaws.com`) 추가
+  - `01b-lifesync-vpc-endpoints.yaml` — KMS Interface VPC Endpoint 추가, ECR Public endpoint 제거 (region 미지원)
+  - `08-database.yaml` — SqlOpsSsmVpceSg 에 `CidrIp: 10.0.0.0/16` 443 inbound 추가
+  - `08-database.yaml`, `08b-lifesync360-service-db.yaml` — DynamoDB `RecommendationResultTable` + SqlAssetsBucket `Retain` → `Delete` (시연/테스트 환경 한정)
+- 인계 노트: `docs/iac-handoff-permissions-addon.md`
+
+**3. 732 계정 인프라 cleanup 완료 (재배포 대기 상태)**
+- CloudFormation stack 16개 모두 DELETE_COMPLETE (01·02·06·07·08·09·10·11·15·17·18·19·21·gha-cc-*·08b·01b)
+- 전 region 잔여 리소스 0 (NAT GW 3개는 `deleted` 상태로 약 1시간 표시 후 자동 소멸)
+- Customer-managed KMS 2개 `PendingDeletion` (자동 회수 대기)
+- CloudWatch Log Group 2개만 잔존 (codebuild log, 무비용)
+
+**4. admin-platform UI 리뉴얼 (설계서 V1 기준 5메뉴)**
+- 사이드바: `Executive Dashboard` / `Customer 360` / `AI 추천` / `운영 모니터링` / `데이터 정합` (시안 mockup 섹션 제거)
+- 라우트:
+  - `/dashboard` (신규) — 기존 `/overview` 로직 + KPI 6 카드 + Cloud Status + S3 Ingestion
+  - `/overview` (302 redirect → `/dashboard`)
+  - `/ai` (신규) — Aurora TOP10 + 카테고리/등급별 + DynamoDB 점수 분포 + AI 모델 메타 (mock)
+  - `/ops` (신규) — Cloud Status + 도메인 흐름(7) + VM/Lambda/Glue/ETL
+  - `/users` → `Customer 360` 라벨 (기존 라우트 재활용)
+  - `/data-integrity` (기존 유지)
+  - `/mockup/*` 3개 라우트 + 템플릿 제거
+- boto3 ping 헬퍼 7종 추가 (`_ping_cloud_status` / `_s3_ingestion` / `_domain_flow` / `_vm_status` / `_lambda_metrics` / `_glue_last_run` / `_next_batch`) — USE_MOCK=true 시 mock fallback, USE_MOCK=false 시 실연동
+- 신규 mock dict 10개 (`mockup_data.py`)
+- 신규 템플릿 3개 (`dashboard.html`, `ai.html`, `ops.html`)
+- wireframe 5장 (`docs/admin-redesign/`)
+
+### 상태
+
+| 항목 | 상태 |
+|------|------|
+| 732 계정 인프라 cleanup | ✅ |
+| IaC 토큰 에러 수정 (KMS+SG+VPCE) | ✅ |
+| 354 → 732 git 스냅샷 보존 | ✅ |
+| admin 5메뉴 UI 리뉴얼 (USE_MOCK=true 동작) | ✅ |
+| admin boto3 ping 헬퍼 (USE_MOCK=false 분기) | ✅ 코드만 |
+| 732 계정 인프라 재배포 | ⏳ |
+| GitHub Secrets 732 키로 재발급 + mirror-to-codecommit 복원 | ⏳ |
+| admin Task Role 에 ping IAM 권한 추가 (rds/dynamodb/elasticache/ecs/elbv2/ec2/lambda/glue/events/cloudwatch Describe*) | ⏳ |

@@ -1,0 +1,161 @@
+{% extends 'base.html' %}
+{% block title %}AI 추천 – Admin{% endblock %}
+{% block page_title %}AI 추천 · Aurora + DynamoDB 기반 분석{% endblock %}
+
+{% block sidebar_extra %}
+<div class="sidebar-sep"></div>
+<div class="sidebar-section">섹션</div>
+<div class="sidebar-sub-item active" onclick="showTab(this, 'top10')">상품 TOP 10</div>
+<div class="sidebar-sub-item" onclick="showTab(this, 'category')">카테고리·등급별</div>
+<div class="sidebar-sub-item" onclick="showTab(this, 'score')">점수 분포</div>
+<div class="sidebar-sub-item" onclick="showTab(this, 'model')">AI 모델 메타</div>
+{% endblock %}
+
+{% block content %}
+<div class="detail-content">
+
+    <!-- TOP 10 -->
+    <div id="sec-top10" class="detail-section active">
+        <div class="card">
+            <div class="card-title">추천 상품 TOP 10 (Aurora)</div>
+            {% if top10 %}
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>순위</th><th>상품</th><th>카테고리</th><th>추천수</th><th>클릭률</th><th>가입률</th></tr></thead>
+                    <tbody>
+                        {% for t in top10 %}
+                        <tr>
+                            <td class="mono">{{ t.rank }}</td>
+                            <td><strong>{{ t.product }}</strong></td>
+                            <td>{{ t.category or '-' }}</td>
+                            <td>{{ '{:,}'.format(t.recommended) }}</td>
+                            <td><strong style="color:#3b82f6;">{{ t.ctr }}%</strong></td>
+                            <td><strong style="color:#16a34a;">{{ t.cvr }}%</strong></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p style="color:#94a3b8;">데이터 없음 (Aurora customer_recommend_history)</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 카테고리·등급별 -->
+    <div id="sec-category" class="detail-section">
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+            <div class="card">
+                <div class="card-title">카테고리별 CTR / CVR</div>
+                {% for c in by_category %}
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                    <span style="width:80px; font-size:12px;">{{ c.category }}</span>
+                    <div style="flex:1; background:#f1f5f9; border-radius:4px; height:10px;">
+                        <div style="height:100%; background:#3b82f6; width:{{ c.ctr }}%; border-radius:4px;"></div>
+                    </div>
+                    <span class="mono" style="font-size:11px; width:50px; text-align:right;">CTR {{ c.ctr }}%</span>
+                    <span class="mono" style="font-size:11px; width:50px; text-align:right; color:#16a34a;">CVR {{ c.cvr }}%</span>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="card">
+                <div class="card-title">등급별 CVR (DynamoDB grade × Aurora)</div>
+                {% for g in by_grade %}
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                    <span style="width:80px;"><span class="badge badge-{{ g.grade | lower }}">{{ g.grade }}</span></span>
+                    <div style="flex:1; background:#f1f5f9; border-radius:4px; height:10px;">
+                        <div style="height:100%; background:#16a34a; width:{{ g.cvr * 6 }}%; border-radius:4px;"></div>
+                    </div>
+                    <span class="mono" style="font-size:11px; width:60px; text-align:right;">{{ g.cvr }}%</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- 점수 분포 -->
+    <div id="sec-score" class="detail-section">
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+            <div class="card">
+                <div class="card-title">종합 점수 분포 (DynamoDB)</div>
+                {% set max_d = score_dist.dynamic_score | map(attribute='count') | max %}
+                {% for b in score_dist.dynamic_score %}
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                    <span style="width:60px; font-size:12px;" class="mono">{{ b.bucket }}</span>
+                    <div style="flex:1; background:#f1f5f9; border-radius:4px; height:10px;">
+                        <div style="height:100%; background:#8b5cf6; width:{{ (b.count / max_d * 100) | round if max_d else 0 }}%; border-radius:4px;"></div>
+                    </div>
+                    <span class="mono" style="font-size:11px; width:70px; text-align:right;">{{ '{:,}'.format(b.count) }}</span>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="card">
+                <div class="card-title">건강 점수 분포</div>
+                {% set max_h = score_dist.health_score | map(attribute='count') | max %}
+                {% for b in score_dist.health_score %}
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                    <span style="width:60px; font-size:12px;" class="mono">{{ b.bucket }}</span>
+                    <div style="flex:1; background:#f1f5f9; border-radius:4px; height:10px;">
+                        <div style="height:100%; background:#14b8a6; width:{{ (b.count / max_h * 100) | round if max_h else 0 }}%; border-radius:4px;"></div>
+                    </div>
+                    <span class="mono" style="font-size:11px; width:70px; text-align:right;">{{ '{:,}'.format(b.count) }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- AI 모델 메타 -->
+    <div id="sec-model" class="detail-section">
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+            <div class="card">
+                <div class="card-title">분석 모델 메타 (mock)</div>
+                <div style="font-size:13px;">
+                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">모델명</span><span class="mono">{{ ai_model.model_name }}</span></div>
+                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">버전</span><strong style="color:#3b82f6;">{{ ai_model.version }}</strong></div>
+                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">학습일</span><span class="mono">{{ ai_model.trained_at }}</span></div>
+                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">알고리즘</span><span>{{ ai_model.algorithm }}</span></div>
+                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">AUC</span><strong style="color:#16a34a;">{{ ai_model.auc }}</strong></div>
+                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">24h 추론</span><strong>{{ '{:,}'.format(ai_model.inference_count_24h) }}</strong></div>
+                </div>
+                <div style="margin-top:8px; font-size:11px; color:#94a3b8;">Feature ({{ ai_model.features | length }}개):</div>
+                <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">
+                    {% for f in ai_model.features %}
+                    <span style="font-size:10px; padding:2px 6px; background:#f1f5f9; border-radius:4px; font-family:monospace;">{{ f }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">분석 건수 추세 (7일)</div>
+                {% set max_count = analysis_trend | map(attribute='count') | max %}
+                {% set min_count = analysis_trend | map(attribute='count') | min %}
+                {% set range_v = max_count - min_count if max_count > min_count else 1 %}
+                <div style="display:flex; align-items:flex-end; gap:6px; height:140px; padding:8px 0; border-bottom:1px solid #f1f5f9;">
+                    {% for d in analysis_trend %}
+                    {% set h = ((d.count - min_count) / range_v * 80 + 20) | round | int %}
+                    <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:4px;">
+                        <div style="font-size:10px; color:#64748b; font-family:monospace;">{{ (d.count / 1000) | round | int }}K</div>
+                        <div style="width:100%; height:{{ h }}%; background:linear-gradient(180deg, #6366f1 0%, #8b5cf6 100%); border-radius:4px 4px 0 0;"></div>
+                        <div style="font-size:10px; color:#94a3b8; font-family:monospace;">{{ d.date }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div style="margin-top:8px; font-size:11px; color:#64748b; display:flex; justify-content:space-between;">
+                    <span>min {{ '{:,}'.format(min_count) }}</span>
+                    <span>max {{ '{:,}'.format(max_count) }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+function showTab(el, id) {
+    document.querySelectorAll('.sidebar-sub-item').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.detail-section').forEach(s => s.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('sec-' + id).classList.add('active');
+}
+</script>
+{% endblock %}

@@ -17,6 +17,11 @@
 | 7 | ECS 태스크 exit code 3 (Gunicorn worker boot error) | 태스크 정의에 `JWT_SECRET` 환경변수 없음 → `os.environ['JWT_SECRET']` KeyError → 워커 크래시 | SSM `/lifesync360/jwt-secret` 생성 후 태스크 정의 `secrets` 필드에 추가, Execution Role에 `ssm:GetParameters` 권한 추가 |
 | 8 | ECS 태스크 포트 불일치 / ALB 헬스체크 실패 루프 | Gunicorn이 8000으로 바인딩, ALB 타겟 그룹은 80 고정 → 헬스체크 실패 → 태스크 교체 무한 루프 | Dockerfile `EXPOSE` 및 `--bind` 포트를 80으로 수정 후 이미지 재빌드 (타겟 그룹 포트는 생성 후 변경 불가) |
 | 9 | ECS 배포 stuck (`unable to stop or start tasks`) | 서비스 배포 설정 `minimumHealthyPercent=100, maximumPercent=100` → desiredCount=1 환경에서 롤링 업데이트 불가 | `minimumHealthyPercent=0, maximumPercent=200`으로 변경 |
+| 10 | ECS task 부팅 시 `invalid token` (SSM SecureString fetch 실패) — 2026-05-15 | ExecutionRole에 `ssm:GetParameters`만 있고 `kms:Decrypt` 없음 → SecureString 복호화 불가 | `21-lifesync-ecs-existing-vpc.yaml` ExecutionRole inline policy에 `kms:Decrypt` (Condition: `kms:ViaService=ssm.${REGION}.amazonaws.com`) 추가 |
+| 11 | SSM endpoint timeout (VPC private subnet) — 2026-05-15 | SSM/SSMMessages/EC2Messages Interface VPC Endpoint 미배포 + SG inbound 443 누락 | `01b-lifesync-vpc-endpoints.yaml` KMS endpoint 추가, `08-database.yaml` SqlOpsSsmVpceSg 에 `CidrIp: 10.0.0.0/16` 443 inbound 추가, ECR Public endpoint 제거 (region 미지원) |
+| 12 | CloudFormation 06-S3 stack `EarlyValidation: bucket already exists` (732 신규 계정) — 2026-05-15 | S3 bucket 이름이 전역 unique → 354 계정 이름과 충돌 | `params/data.env` 의 `LIFESYNC_*_S3_BUCKET` 이름에 `-732264765472` suffix 추가 |
+| 13 | DynamoDB `RecommendationResultTable` stack 삭제 차단 — 2026-05-15 | `DeletionPolicy: Retain` 으로 cleanup 시 dangling 발생 | 08/08b stack: DynamoDB + SqlAssetsBucket `Retain` → `Delete` (시연/테스트 환경 한정, 운영은 Retain 복귀) |
+| 14 | GitHub Actions `mirror-to-codecommit` 가 354 계정으로 동작 — 2026-05-15 | GitHub Secrets `AWS_ACCESS_KEY_ID` 가 354 계정 IAM key | `.github/workflows/platform.yml` 의 `mirror-to-codecommit` job `if: false` 로 임시 비활성. 732 키로 재발급 후 복원 예정 |
 
 ---
 

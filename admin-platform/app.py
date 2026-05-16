@@ -375,7 +375,7 @@ def login():
         if (request.form.get('username') == ADMIN_USER and
                 request.form.get('password') == ADMIN_PASS):
             session['logged_in'] = True
-            return redirect(url_for('overview'))
+            return redirect(url_for('dashboard'))
         error = '아이디 또는 비밀번호가 올바르지 않습니다.'
     return render_template('login.html', error=error)
 
@@ -389,13 +389,20 @@ def logout():
 @app.route('/')
 @login_required
 def index():
-    return redirect(url_for('overview'))
+    return redirect(url_for('dashboard'))
 
 
-# ── Overview ──────────────────────────────────────────
+# 기존 /overview URL은 /dashboard 로 영구 이동
 @app.route('/overview')
 @login_required
 def overview():
+    return redirect(url_for('dashboard'))
+
+
+# ── Executive Dashboard ───────────────────────────────
+@app.route('/dashboard')
+@login_required
+def dashboard():
     if USE_MOCK:
         total_users = len(MOCK_USERS)
         grade_dist  = {g: 0 for g in GRADES}
@@ -494,7 +501,27 @@ def overview():
         consent_rate = 0  # Aurora users_ref 동기화 후 구현
         recent_users = {i['global_id']: {'global_id': i['global_id'], 'ls_user_id': i['global_id']} for i in recent}
 
-    return render_template('overview.html',
+    # ─ 신규 카드: Cloud Status / S3 Ingestion / KPI 요약 ─
+    if USE_MOCK:
+        cloud_status = MOCKUP_INFRA
+        s3_ingestion = MOCKUP_S3_INGESTION
+        kpi          = dict(MOCKUP_KPI_SUMMARY, total_customers=total_users)
+    else:
+        cloud_status = _ping_cloud_status()
+        s3_ingestion = _ping_s3_ingestion()
+        kpi = {
+            'total_customers':  total_users,
+            'total_recommend':  sum(r.get('recommended', 0) for r in product_funnel),
+            'ctr_7d':           0,
+            'cvr_7d':           0,
+            'redis_cache_keys': 0,
+            'redis_hit_rate':   0,
+            'req_per_sec':      0,
+            'p95_latency_ms':   0,
+        }
+
+    return render_template('dashboard.html',
+        active='dashboard',
         total_users=total_users,
         grade_dist=grade_dist,
         analyzed=analyzed,
@@ -509,6 +536,9 @@ def overview():
         product_funnel=product_funnel,
         top_viewed=top_viewed,
         tab_clicks=tab_clicks,
+        cloud_status=cloud_status,
+        s3_ingestion=s3_ingestion,
+        kpi=kpi,
     )
 
 
@@ -556,6 +586,7 @@ def users():
         ]
 
     return render_template('users.html',
+        active='customer',
         users=user_list,
         q=q,
         grade_filter=grade_filter,
@@ -615,6 +646,7 @@ def user_detail(global_id):
         }
 
     return render_template('user_detail.html',
+        active='customer',
         user=user,
         scores=scores,
         consents=consents,
@@ -623,46 +655,126 @@ def user_detail(global_id):
     )
 
 
-# ── Mockup 시안 (정식 화면 아님 · mock 데이터 임의) ──
+# 운영 모니터링에서 재활용할 ETL/오류 mock dict
 from mockup_data import (
     MOCKUP_ETL_LAST_RUN, MOCKUP_ETL_NEXT, MOCKUP_EXTERNAL_SYSTEMS, MOCKUP_RECENT_ERRORS,
-    MOCKUP_INFRA, MOCKUP_PII_STATUS, MOCKUP_AI_MODEL, MOCKUP_ANALYSIS_TREND, MOCKUP_CUSTOMER,
+    MOCKUP_PII_STATUS,
 )
 
 
-@app.route('/mockup/overview')
+# ── AI 추천 ───────────────────────────────────────────
+@app.route('/ai')
 @login_required
-def mockup_overview():
-    ext_ok = sum(1 for s in MOCKUP_EXTERNAL_SYSTEMS if s['status'] == 'OK')
-    return render_template('mockup/overview.html',
-        active='mockup_overview',
-        etl_last=MOCKUP_ETL_LAST_RUN,
-        etl_next=MOCKUP_ETL_NEXT,
-        ext_systems=MOCKUP_EXTERNAL_SYSTEMS,
-        ext_ok=ext_ok,
-        ext_total=len(MOCKUP_EXTERNAL_SYSTEMS),
-        recent_errors=MOCKUP_RECENT_ERRORS,
-        infra=MOCKUP_INFRA,
-    )
+def ai():
+    if USE_MOCK:
+        top10        = MOCKUP_RECOMMEND_TOP10
+        by_category  = MOCKUP_RECOMMEND_BY_CATEGORY
+        by_grade     = MOCKUP_RECOMMEND_BY_GRADE
+        score_dist   = MOCKUP_SCORE_DISTRIBUTION
+    else:
+        # Aurora 기반 — 카테고리별/등급별/TOP10 (DB 없으면 빈 리스트)
+        top10 = by_category = by_grade = []
+        score_dist = {'dynamic_score': [], 'health_score': []}
+        try:
+            db = get_db()
+            try:
+                with db.cursor() as cur:
+                    cur.execute(
+                        'SELECT p.product_name AS product, p.category, '
+                        '       COUNT(*) AS recommended, '
+                        '       ROUND(SUM(r.clicked_flag = "Y") / COUNT(*) * 100, 1) AS ctr, '
+                        '       ROUND(SUM(r.purchased_flag = "Y") / COUNT(*) * 100, 1) AS cvr '
+                        'FROM customer_recommend_history r '
+                        'JOIN product_master p ON r.product_id = p.product_id '
+                        'GROUP BY p.product_id, p.product_name, p.category '
+                        'ORDER BY recommended DESC LIMIT 10'
+                    )
+                    top10 = [dict(r, rank=i + 1) for i, r in enumerate(cur.fetchall())]
 
+                    cur.execute(
+                        'SELECT p.category, '
+                        '       ROUND(SUM(r.clicked_flag = "Y")  / COUNT(*) * 100, 1) AS ctr, '
+                        '       ROUND(SUM(r.purchased_flag = "Y") / COUNT(*) * 100, 1) AS cvr '
+                        'FROM customer_recommend_history r '
+                        'JOIN product_master p ON r.product_id = p.product_id '
+                        'GROUP BY p.category ORDER BY ctr DESC'
+                    )
+                    by_category = list(cur.fetchall())
+            finally:
+                db.close()
+        except Exception:
+            pass
+        # DynamoDB — 점수 분포 (5 bucket)
+        try:
+            items = get_dynamo_table().scan(
+                ProjectionExpression='dynamic_score, health_score, dynamic_grade'
+            ).get('Items', [])
+            from collections import defaultdict
+            buckets = ['0-20', '20-40', '40-60', '60-80', '80-100']
+            def _bucket(v):
+                v = float(v or 0)
+                if v < 20:  return '0-20'
+                if v < 40:  return '20-40'
+                if v < 60:  return '40-60'
+                if v < 80:  return '60-80'
+                return '80-100'
+            ds = defaultdict(int); hs = defaultdict(int); gc = defaultdict(lambda: {'cnt': 0, 'purch': 0})
+            for i in items:
+                ds[_bucket(i.get('dynamic_score'))] += 1
+                hs[_bucket(i.get('health_score'))]  += 1
+                gc[i.get('dynamic_grade', 'BASIC')]['cnt'] += 1
+            score_dist = {
+                'dynamic_score': [{'bucket': b, 'count': ds[b]} for b in buckets],
+                'health_score':  [{'bucket': b, 'count': hs[b]} for b in buckets],
+            }
+            by_grade = [{'grade': g, 'cvr': 0} for g in GRADES if gc[g]['cnt']]
+        except Exception:
+            pass
 
-@app.route('/mockup/analytics')
-@login_required
-def mockup_analytics():
-    return render_template('mockup/analytics.html',
-        active='mockup_analytics',
-        pii=MOCKUP_PII_STATUS,
+    return render_template('ai.html',
+        active='ai',
+        top10=top10,
+        by_category=by_category,
+        by_grade=by_grade,
+        score_dist=score_dist,
         ai_model=MOCKUP_AI_MODEL,
         analysis_trend=MOCKUP_ANALYSIS_TREND,
     )
 
 
-@app.route('/mockup/customer-data')
+# ── 운영 모니터링 ─────────────────────────────────────
+@app.route('/ops')
 @login_required
-def mockup_customer_data():
-    return render_template('mockup/customer_data.html',
-        active='mockup_customer',
-        c=MOCKUP_CUSTOMER,
+def ops():
+    if USE_MOCK:
+        cloud_status   = MOCKUP_INFRA
+        s3_ingestion   = MOCKUP_S3_INGESTION
+        domain_flow    = MOCKUP_DOMAIN_FLOW
+        vm_status      = MOCKUP_VM_STATUS
+        lambda_metrics = MOCKUP_LAMBDA_METRICS
+        glue_last      = MOCKUP_GLUE_LAST_RUN
+        next_batch     = MOCKUP_NEXT_BATCH
+        recent_errors  = MOCKUP_RECENT_ERRORS
+    else:
+        cloud_status   = _ping_cloud_status()
+        s3_ingestion   = _ping_s3_ingestion()
+        domain_flow    = _ping_domain_flow()
+        vm_status      = _ping_vm_status()
+        lambda_metrics = _ping_lambda_metrics()
+        glue_last      = _ping_glue_last_run()
+        next_batch     = _ping_next_batch()
+        recent_errors  = []  # CloudWatch Logs Insights 별도 작업
+
+    return render_template('ops.html',
+        active='ops',
+        cloud_status=cloud_status,
+        s3_ingestion=s3_ingestion,
+        domain_flow=domain_flow,
+        vm_status=vm_status,
+        lambda_metrics=lambda_metrics,
+        glue_last=glue_last,
+        next_batch=next_batch,
+        recent_errors=recent_errors,
     )
 
 
