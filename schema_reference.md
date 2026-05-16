@@ -65,6 +65,8 @@
 | mobile_enc | VARCHAR(255) | 휴대폰(암호화) | |
 | email_enc | VARCHAR(255) | 이메일(암호화) | |
 | address_enc | VARCHAR(500) | 주소(암호화) | 시/도 + 시/군/구 + 도로명 + 건물번호 |
+| created_dt | TIMESTAMP | 행 생성일시 | DEFAULT CURRENT_TIMESTAMP |
+| updated_dt | TIMESTAMP | 마지막 갱신일시 | ON UPDATE CURRENT_TIMESTAMP |
 
 ---
 
@@ -102,6 +104,7 @@
 | source_customer_id | VARCHAR(30) | 계열사 원본 고객 ID | `BNK-00000001` 형식 |
 | match_type | VARCHAR(10) | 매칭 방식 | `EXACT` / `FUZZY` |
 | active_flag | CHAR(1) | 활성 여부 | `Y` / `N` |
+| created_dt | TIMESTAMP | 매핑 생성일시 | DEFAULT CURRENT_TIMESTAMP |
 
 ---
 
@@ -119,7 +122,15 @@
 | revoke_dt | TIMESTAMP NULL | 철회일시 | `NULL` = 철회 안 됨 |
 | consent_dt | TIMESTAMP NULL | 동의일시 | `NULL` = 동의 이력 없음 |
 
-**도메인 8종**: `BANK`, `CARD`, `INSURANCE`, `INTERNET_INSURANCE`, `HOSPITAL`, `HEALTHCARE`, `STOCK`, `WEARABLE`
+**도메인 8종** (Aurora `company_master.company_code` 와 통일):
+- `BANK` (은행)
+- `CARD` (카드)
+- `SEC` (증권)
+- `INS` (보험사)
+- `ONINS` (인터넷보험)
+- `HLT` (헬스케어)
+- `HOS` (병원)
+- `WBL` (웨어러블)
 
 **의미 조합**:
 | consent_flag | consent_dt | revoke_dt | 의미 |
@@ -142,8 +153,9 @@
 | matched_global_id | VARCHAR(30) | 매칭 결과 통합키 | |
 | match_rule | VARCHAR(30) | 매칭 규칙 | `EXACT_RRN` 등 |
 | match_score | INT | 매칭 점수 | 0~100 |
-| result | VARCHAR(20) | 결과 | `MATCH` / `NO_MATCH` |
+| result | VARCHAR(20) | 결과 | `MATCH` / `NEW_CREATE` |
 | request_dt | TIMESTAMP | 요청일시 | |
+| remarks | TEXT | 추가 메모 | 자유 텍스트, NULL 가능 |
 
 ---
 
