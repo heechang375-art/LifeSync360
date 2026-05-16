@@ -43,6 +43,7 @@ from mockup_data import (
     MOCKUP_LAMBDA_METRICS, MOCKUP_GLUE_LAST_RUN, MOCKUP_NEXT_BATCH,
     MOCKUP_RECOMMEND_BY_CATEGORY, MOCKUP_RECOMMEND_BY_GRADE, MOCKUP_RECOMMEND_TOP10,
     MOCKUP_AI_MODEL, MOCKUP_ANALYSIS_TREND, MOCKUP_SCORE_DISTRIBUTION,
+    MOCKUP_CUSTOMER_KPI, MOCKUP_CUSTOMER,
 )
 
 
@@ -585,6 +586,18 @@ def users():
             for i in items[offset:offset + per_page]
         ]
 
+    # 상단 KPI 카드 (검색 박스 위)
+    if USE_MOCK:
+        kpi = dict(MOCKUP_CUSTOMER_KPI, total_customers=len(MOCK_USERS))
+        # mock 시점 등급 분포 재계산
+        kpi['vip_gold_count'] = sum(1 for u in MOCK_USERS if u['grade'] in ('VIP', 'GOLD'))
+        kpi['vip_gold_pct']   = round(kpi['vip_gold_count'] / max(1, len(MOCK_USERS)) * 100, 1)
+        kpi['active_campaigns'] = len(MOCK_CAMPAIGNS)
+    else:
+        kpi = dict(MOCKUP_CUSTOMER_KPI)
+        # 운영: total_customers 는 위에서 계산한 total 사용, 나머지는 mock fallback
+        kpi['total_customers'] = total
+
     return render_template('users.html',
         active='customer',
         users=user_list,
@@ -594,6 +607,7 @@ def users():
         page=page,
         total_pages=max(1, (total + per_page - 1) // per_page),
         total=total,
+        kpi=kpi,
     )
 
 

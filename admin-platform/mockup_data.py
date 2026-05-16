@@ -244,6 +244,17 @@ MOCKUP_RECOMMEND_TOP10 = [
 ]
 
 
+# ── Customer 360 — 상단 KPI 카드 ───────────────────────────
+MOCKUP_CUSTOMER_KPI = {
+    'total_customers':   100_000,
+    'vip_gold_count':      4_810,
+    'vip_gold_pct':            4.8,
+    'active_campaigns':        7,
+    'new_signup_24h':        238,
+    'avg_ai_score':         72.4,
+}
+
+
 # ── AI 추천 — 점수 분포 (DynamoDB scan fallback) ───────────
 MOCKUP_SCORE_DISTRIBUTION = {
     'dynamic_score': [

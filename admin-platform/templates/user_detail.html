@@ -20,6 +20,52 @@
     유저 목록으로
 </a>
 
+<!-- Customer 360 요약 (시안 02_customer360.png 상단 3카드) -->
+<div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; margin-bottom:16px;">
+    <div class="card" style="padding:16px;">
+        <div style="display:flex; align-items:center; gap:12px;">
+            <div style="width:48px; height:48px; border-radius:50%; background:#6366f1; color:#fff; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700;">
+                {% if scores and scores.dynamic_score %}{{ scores.dynamic_score | float | round | int }}{% else %}-{% endif %}
+            </div>
+            <div>
+                <div style="font-size:15px; font-weight:700;">{{ user.name }}</div>
+                <div style="font-size:11px; color:#94a3b8;" class="mono">{{ user.global_id }} · <span class="badge badge-{{ user.grade | lower }}" style="font-size:10px;">{{ user.grade }}</span></div>
+            </div>
+        </div>
+        <div style="margin-top:12px; font-size:11px; color:#64748b;">
+            ls_user_id: <span class="mono">{{ user.ls_user_id }}</span>
+        </div>
+    </div>
+
+    <div class="card" style="padding:16px;">
+        <div style="font-size:11px; color:#64748b;">종합 점수 (DynamoDB)</div>
+        <div style="font-size:28px; font-weight:700; color:#16a34a; margin-top:4px;">
+            {{ scores.dynamic_score if scores else '-' }}
+        </div>
+        {% if scores %}
+        <div style="font-size:11px; color:#475569; margin-top:6px;">
+            건강 <strong>{{ scores.health_score or '-' }}</strong> ·
+            금융 <strong>{{ scores.fin_score or '-' }}</strong> ·
+            행동 <strong>{{ scores.behavior_score or '-' }}</strong>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="card" style="padding:16px;">
+        <div style="font-size:11px; color:#64748b;">Next Best Action</div>
+        {% if scores and scores.next_best_action %}
+        <div style="font-size:13px; font-weight:600; color:#1e293b; margin-top:6px; line-height:1.4;">{{ scores.next_best_action }}</div>
+        <div style="margin-top:8px; font-size:11px; color:#475569;">
+            VIP <strong>{{ ((scores.vip_prob | float) * 100) | round | int if scores.vip_prob else 0 }}%</strong> ·
+            가입 <strong>{{ ((scores.signup_prob | float) * 100) | round | int if scores.signup_prob else 0 }}%</strong> ·
+            추천 <strong>{{ ((scores.rec_prob | float) * 100) | round | int if scores.rec_prob else 0 }}%</strong>
+        </div>
+        {% else %}
+        <div style="font-size:12px; color:#94a3b8; margin-top:6px;">데이터 없음</div>
+        {% endif %}
+    </div>
+</div>
+
 <div class="detail-content">
 
     <!-- 계정 정보 -->

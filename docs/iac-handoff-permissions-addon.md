@@ -168,3 +168,46 @@ NEW_TASK=$(aws cloudformation describe-stack-resources --stack-name lifesync-dev
 - **`10.0.0.0/16` 하드코딩**: 08-database.yaml 의 VPC CIDR. VPC CIDR 이 다르면 yaml 수정 필요. 정식 fix 는 `VpcCidr` Parameter 추가.
 - **KMS endpoint 비용**: Interface endpoint 1개당 시간당 ~$0.01 + 데이터 처리. ECS task 가 자주 secret fetch 안 한다면 NAT 경유 + KMS 권한 추가만으로도 가능. 단 안정성은 endpoint 가 높음.
 - **ECR Public 미지원**: 현재 region(ap-northeast-2)에서 endpoint 미지원. ECR Public 이미지 필요하면 별도 처리.
+
+---
+
+## 6. 추가 변경 (2026-05-16) — admin 운영 모니터링용 IAM
+
+**파일**: `21-lifesync-ecs-existing-vpc.yaml` (EcsTaskRole)
+
+admin-platform 의 `/ops`, `/dashboard` 화면에서 USE_MOCK=false 로 동작 시 AWS 리소스 ping 이 필요. EcsTaskRole 에 read-only inline policy `admin-monitoring-readonly` 추가:
+
+```yaml
+EcsTaskRole:
+  Properties:
+    Policies:
+      - PolicyName: admin-monitoring-readonly
+        PolicyDocument:
+          Statement:
+            - Sid: DescribeAwsResources
+              Action:
+                - rds:DescribeDBClusters
+                - dynamodb:ListTables / DescribeTable
+                - elasticache:DescribeCacheClusters
+                - ecs:ListClusters / DescribeServices / ListServices
+                - elbv2:DescribeLoadBalancers / DescribeTargetGroups / DescribeTargetHealth
+                - s3:ListAllMyBuckets / HeadBucket
+                - ec2:DescribeInstances / DescribeTransitGateways / DescribeVpnConnections / DescribeVpcPeeringConnections
+                - lambda:GetFunction / ListFunctions
+                - glue:GetJobRuns / ListJobs
+                - events:DescribeRule / ListRules
+                - cloudwatch:GetMetricStatistics / GetMetricData
+              Resource: "*"
+            - Sid: ListLifesyncBuckets
+              Action: s3:ListBucket
+              Resource: "arn:aws:s3:::lifesync-*"
+```
+
+**적용 시점**: 21-stack 재배포 시 자동. 기존 배포된 경우 update-stack 으로 IAM 변경분만 반영 (downtime 없음).
+
+**검증**: admin-platform Task 컨테이너 안에서:
+```bash
+aws sts get-caller-identity   # EcsTaskRole 확인
+aws rds describe-db-clusters --region ap-northeast-2
+aws s3 ls
+```
