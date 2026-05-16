@@ -36,6 +36,15 @@ if USE_MOCK:
         DOMAINS, INTEGRITY_TABLE_ROWS, INTEGRITY_TOKEN_MAP_COVERAGE,
     )
 
+# 신규 페이지에서 mock fallback 으로 사용 (USE_MOCK=true 일 때 항상 적재)
+from mockup_data import (
+    MOCKUP_KPI_SUMMARY, MOCKUP_S3_INGESTION,
+    MOCKUP_INFRA, MOCKUP_DOMAIN_FLOW, MOCKUP_VM_STATUS,
+    MOCKUP_LAMBDA_METRICS, MOCKUP_GLUE_LAST_RUN, MOCKUP_NEXT_BATCH,
+    MOCKUP_RECOMMEND_BY_CATEGORY, MOCKUP_RECOMMEND_BY_GRADE, MOCKUP_RECOMMEND_TOP10,
+    MOCKUP_AI_MODEL, MOCKUP_ANALYSIS_TREND, MOCKUP_SCORE_DISTRIBUTION,
+)
+
 
 # ── DB / DynamoDB 헬퍼 ────────────────────────────────
 def get_db():
@@ -102,6 +111,246 @@ def _get_identities(global_id):
     except Exception:
         pass
     return []
+
+
+# ── boto3 ping 헬퍼 (운영 모니터링·Cloud Status용) ──────────
+_boto_clients = {}
+
+
+def _boto(service):
+    if service not in _boto_clients:
+        _boto_clients[service] = boto3.client(service, region_name=AWS_REGION)
+    return _boto_clients[service]
+
+
+def _ping_cloud_status():
+    """Cloud Status 카드 — AWS 리소스 6종 describe."""
+    out = []
+    try:
+        clusters = _boto('rds').describe_db_clusters().get('DBClusters', [])
+        ok = sum(1 for c in clusters if c.get('Status') == 'available')
+        out.append({'service': 'AWS Aurora', 'state': 'UP' if ok else 'DOWN', 'note': f'{ok}/{len(clusters)} clusters available'})
+    except Exception as e:
+        out.append({'service': 'AWS Aurora', 'state': 'ERR', 'note': str(e)[:60]})
+    try:
+        tables = _boto('dynamodb').list_tables().get('TableNames', [])
+        out.append({'service': 'AWS DynamoDB', 'state': 'UP', 'note': f'{len(tables)} tables'})
+    except Exception as e:
+        out.append({'service': 'AWS DynamoDB', 'state': 'ERR', 'note': str(e)[:60]})
+    try:
+        caches = _boto('elasticache').describe_cache_clusters().get('CacheClusters', [])
+        ok = sum(1 for c in caches if c.get('CacheClusterStatus') == 'available')
+        out.append({'service': 'AWS ElastiCache', 'state': 'UP' if ok else 'DOWN', 'note': f'{ok}/{len(caches)} clusters'})
+    except Exception as e:
+        out.append({'service': 'AWS ElastiCache', 'state': 'ERR', 'note': str(e)[:60]})
+    try:
+        clusters = _boto('ecs').list_clusters().get('clusterArns', [])
+        out.append({'service': 'AWS ECS', 'state': 'UP' if clusters else 'DOWN', 'note': f'{len(clusters)} clusters'})
+    except Exception as e:
+        out.append({'service': 'AWS ECS', 'state': 'ERR', 'note': str(e)[:60]})
+    try:
+        lbs = _boto('elbv2').describe_load_balancers().get('LoadBalancers', [])
+        ok = sum(1 for l in lbs if l.get('State', {}).get('Code') == 'active')
+        out.append({'service': 'AWS ALB', 'state': 'UP' if ok else 'DOWN', 'note': f'{ok}/{len(lbs)} active'})
+    except Exception as e:
+        out.append({'service': 'AWS ALB', 'state': 'ERR', 'note': str(e)[:60]})
+    try:
+        buckets = _boto('s3').list_buckets().get('Buckets', [])
+        out.append({'service': 'AWS S3', 'state': 'UP', 'note': f'{len(buckets)} buckets'})
+    except Exception as e:
+        out.append({'service': 'AWS S3', 'state': 'ERR', 'note': str(e)[:60]})
+    return out
+
+
+def _ping_s3_ingestion():
+    """S3 Data Ingestion — raw bucket 적재 현황."""
+    raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', '')
+    if not raw_bucket:
+        return {'raw_bucket_files': 0, 'today_ingested': 0, 'iot_count': 0,
+                'last_upload': {}, 'failed_count': 0}
+    from datetime import datetime, timezone
+    today_prefix = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    try:
+        s3 = _boto('s3')
+        paginator = s3.get_paginator('list_objects_v2')
+        total = today = iot = 0
+        latest = None
+        for page in paginator.paginate(Bucket=raw_bucket):
+            for o in page.get('Contents', []):
+                total += 1
+                if today_prefix in o['Key']:
+                    today += 1
+                if 'wearable' in o['Key'].lower() or 'iot' in o['Key'].lower():
+                    iot += 1
+                if latest is None or o['LastModified'] > latest['LastModified']:
+                    latest = o
+        return {
+            'raw_bucket_files': total,
+            'today_ingested':   today,
+            'iot_count':        iot,
+            'last_upload': {
+                'time': latest['LastModified'].strftime('%H:%M') if latest else '-',
+                'file': latest['Key'].split('/')[-1] if latest else '-',
+                'size_mb': round(latest['Size'] / 1024 / 1024, 2) if latest else 0,
+            } if latest else {},
+            'failed_count': 0,
+        }
+    except Exception:
+        return {'raw_bucket_files': 0, 'today_ingested': 0, 'iot_count': 0,
+                'last_upload': {}, 'failed_count': 0}
+
+
+def _ping_domain_flow():
+    """도메인별 S3 prefix 적재 현황 — 7 도메인."""
+    raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', '')
+    stream     = os.environ.get('INGESTION_STREAM_NAME', 'lifesync-kinesis-wearable-stream')
+    domains    = [
+        ('BANK',       'LS 은행',     'bank/'),
+        ('CARD',       'LS 카드',     'card/'),
+        ('INSURANCE',  'LS 보험',     'insurance/'),
+        ('SECURITIES', 'LS 증권',     'securities/'),
+        ('HEALTHCARE', 'LS 헬스케어', 'healthcare/'),
+        ('HOSPITAL',   'LS 병원',     'hospital/'),
+    ]
+    out = []
+    if not raw_bucket:
+        return out
+    from datetime import datetime, timezone, timedelta
+    today_prefix = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    warn_threshold = datetime.now(timezone.utc) - timedelta(hours=1)
+    s3 = _boto('s3')
+    for code, label, prefix in domains:
+        try:
+            resp  = s3.list_objects_v2(Bucket=raw_bucket, Prefix=prefix, MaxKeys=1000)
+            files = resp.get('Contents', [])
+            today_count = sum(1 for f in files if today_prefix in f['Key'])
+            latest      = max(files, key=lambda f: f['LastModified']) if files else None
+            state = 'OK' if latest and latest['LastModified'] > warn_threshold else ('WARN' if latest else 'DOWN')
+            out.append({
+                'domain': code, 'label': label,
+                'last_upload_at': latest['LastModified'].strftime('%H:%M:%S') if latest else '-',
+                'files_today':   today_count, 'state': state,
+                'source':        f's3://{raw_bucket}/{prefix}',
+            })
+        except Exception:
+            out.append({'domain': code, 'label': label, 'last_upload_at': '-', 'files_today': 0, 'state': 'ERR', 'source': '-'})
+    # WEARABLE: Kinesis IncomingRecords (last 5min)
+    try:
+        from datetime import datetime, timezone, timedelta
+        cw    = _boto('cloudwatch')
+        now   = datetime.now(timezone.utc)
+        stats = cw.get_metric_statistics(
+            Namespace='AWS/Kinesis', MetricName='IncomingRecords',
+            Dimensions=[{'Name': 'StreamName', 'Value': stream}],
+            StartTime=now - timedelta(minutes=5), EndTime=now, Period=60, Statistics=['Sum'],
+        )
+        total = sum(p.get('Sum', 0) for p in stats.get('Datapoints', []))
+        out.append({'domain': 'WEARABLE', 'label': '웨어러블',
+                    'last_upload_at': now.strftime('%H:%M:%S'),
+                    'files_today': int(total),
+                    'state': 'OK' if total > 0 else 'WARN',
+                    'source': f'Kinesis: {stream}'})
+    except Exception:
+        out.append({'domain': 'WEARABLE', 'label': '웨어러블', 'last_upload_at': '-',
+                    'files_today': 0, 'state': 'ERR', 'source': f'Kinesis: {stream}'})
+    return out
+
+
+def _ping_vm_status():
+    """Group/Wearable VM EC2 상태."""
+    try:
+        ec2  = _boto('ec2')
+        resp = ec2.describe_instances(Filters=[
+            {'Name': 'tag:Project', 'Values': ['lifesync']},
+            {'Name': 'instance-state-name', 'Values': ['running', 'pending', 'stopping', 'stopped']},
+        ])
+        out = []
+        for r in resp.get('Reservations', []):
+            for inst in r.get('Instances', []):
+                name = next((t['Value'] for t in inst.get('Tags', []) if t['Key'] == 'Name'), '-')
+                out.append({
+                    'vm_id':   inst['InstanceId'],
+                    'name':    name,
+                    'state':   inst['State']['Name'],
+                    'cpu_pct': 0, 'mem_pct': 0,  # CloudWatch agent metric으로 별도 보강
+                })
+        return out
+    except Exception:
+        return []
+
+
+def _ping_lambda_metrics():
+    """주요 Lambda 함수 호출률 (최근 1h)."""
+    from datetime import datetime, timezone, timedelta
+    fns = [
+        'lifesync-batch-loader-lambda',
+        'lifesync-ingest-lambda',
+        'lifesync-recommendation-engine-lambda',
+        'lifesync-wearable-stream-lambda',
+    ]
+    cw  = _boto('cloudwatch')
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(hours=1)
+    out = []
+    for fn in fns:
+        try:
+            inv = cw.get_metric_statistics(
+                Namespace='AWS/Lambda', MetricName='Invocations',
+                Dimensions=[{'Name': 'FunctionName', 'Value': fn}],
+                StartTime=start, EndTime=now, Period=3600, Statistics=['Sum'],
+            )
+            err = cw.get_metric_statistics(
+                Namespace='AWS/Lambda', MetricName='Errors',
+                Dimensions=[{'Name': 'FunctionName', 'Value': fn}],
+                StartTime=start, EndTime=now, Period=3600, Statistics=['Sum'],
+            )
+            dur = cw.get_metric_statistics(
+                Namespace='AWS/Lambda', MetricName='Duration',
+                Dimensions=[{'Name': 'FunctionName', 'Value': fn}],
+                StartTime=start, EndTime=now, Period=3600, Statistics=['Average'],
+            )
+            out.append({
+                'fn': fn,
+                'invocations_1h':  int(sum(p['Sum']     for p in inv.get('Datapoints', []))),
+                'errors_1h':       int(sum(p['Sum']     for p in err.get('Datapoints', []))),
+                'avg_duration_ms': int(sum(p['Average'] for p in dur.get('Datapoints', [])) / max(1, len(dur.get('Datapoints', [])))),
+            })
+        except Exception:
+            out.append({'fn': fn, 'invocations_1h': 0, 'errors_1h': 0, 'avg_duration_ms': 0})
+    return out
+
+
+def _ping_glue_last_run():
+    """Glue Job 최근 run."""
+    job = os.environ.get('GLUE_JOB_PHYSICAL_NAME', 'lifesync-etl')
+    try:
+        runs = _boto('glue').get_job_runs(JobName=job, MaxResults=1).get('JobRuns', [])
+        if not runs:
+            return {}
+        r = runs[0]
+        return {
+            'job_name':     job,
+            'state':        r.get('JobRunState'),
+            'started_at':   r['StartedOn'].strftime('%Y-%m-%d %H:%M:%S') if r.get('StartedOn') else '-',
+            'completed_at': r['CompletedOn'].strftime('%Y-%m-%d %H:%M:%S') if r.get('CompletedOn') else '-',
+            'duration_sec': int(r.get('ExecutionTime') or 0),
+        }
+    except Exception:
+        return {}
+
+
+def _ping_next_batch():
+    """EventBridge 다음 배치 예정."""
+    rule = os.environ.get('GLUE_SCHEDULE_RULE', 'lifesync-daily-etl-rule')
+    try:
+        info = _boto('events').describe_rule(Name=rule)
+        return {
+            'rule_name':         rule,
+            'schedule':          info.get('ScheduleExpression', '-'),
+            'next_scheduled_at': '-',  # AWS는 next fire time API 없음 — UI에서 schedule expression만 표시
+        }
+    except Exception:
+        return {}
 
 
 # ── Auth ──────────────────────────────────────────────

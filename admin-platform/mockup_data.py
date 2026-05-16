@@ -144,3 +144,120 @@ MOCKUP_CUSTOMER = {
         'last_attempt_at': '2026-04-23 11:00',
     },
 }
+
+
+# ── Executive Dashboard 보조 카드 ─────────────────────────
+MOCKUP_KPI_SUMMARY = {
+    'total_customers': 100_000,
+    'total_recommend': 1_234_890,
+    'ctr_7d':              23.4,
+    'cvr_7d':               4.8,
+    'redis_cache_keys':  98_420,
+    'redis_hit_rate':      87.3,
+    'req_per_sec':         412,
+    'p95_latency_ms':      138,
+}
+
+MOCKUP_S3_INGESTION = {
+    'raw_bucket_files': 84_290,
+    'today_ingested':   12_438,
+    'iot_count':       284_113,
+    'last_upload':     {'time': '09:14', 'file': 'wearable_2026-05-16.csv', 'size_mb': 2.3},
+    'failed_count':     0,
+}
+
+
+# ── 운영 모니터링 — 도메인별 데이터 흐름 (S3 prefix 적재 현황) ──
+MOCKUP_DOMAIN_FLOW = [
+    {'domain': 'BANK',       'label': 'LS 은행',     'last_upload_at': '11:24:30', 'files_today':  144, 'state': 'OK',   'source': 's3://lifesync-raw/bank/'},
+    {'domain': 'CARD',       'label': 'LS 카드',     'last_upload_at': '11:24:25', 'files_today':  144, 'state': 'OK',   'source': 's3://lifesync-raw/card/'},
+    {'domain': 'INSURANCE',  'label': 'LS 보험',     'last_upload_at': '10:42:00', 'files_today':  120, 'state': 'WARN', 'source': 's3://lifesync-raw/insurance/'},
+    {'domain': 'SECURITIES', 'label': 'LS 증권',     'last_upload_at': '11:24:32', 'files_today':  144, 'state': 'OK',   'source': 's3://lifesync-raw/securities/'},
+    {'domain': 'HEALTHCARE', 'label': 'LS 헬스케어', 'last_upload_at': '11:24:28', 'files_today':  144, 'state': 'OK',   'source': 's3://lifesync-raw/healthcare/'},
+    {'domain': 'HOSPITAL',   'label': 'LS 병원',     'last_upload_at': '11:24:31', 'files_today':  144, 'state': 'OK',   'source': 's3://lifesync-raw/hospital/'},
+    {'domain': 'WEARABLE',   'label': '웨어러블',    'last_upload_at': '11:24:15', 'files_today': 2880, 'state': 'OK',   'source': 'Kinesis: lifesync-wearable-stream'},
+]
+
+
+# ── 운영 모니터링 — Group / Wearable VM ───────────────────
+MOCKUP_VM_STATUS = [
+    {'vm_id': 'i-0a1b...01', 'name': 'group-vm-1 (bank/card)',      'state': 'running', 'cpu_pct': 32, 'mem_pct': 58},
+    {'vm_id': 'i-0a1b...02', 'name': 'group-vm-2 (insur/secur)',    'state': 'running', 'cpu_pct': 28, 'mem_pct': 61},
+    {'vm_id': 'i-0a1b...03', 'name': 'group-vm-3 (health/hosp)',    'state': 'running', 'cpu_pct': 41, 'mem_pct': 70},
+    {'vm_id': 'i-0a1b...04', 'name': 'wearable-vm-1 (agent)',       'state': 'running', 'cpu_pct': 55, 'mem_pct': 72},
+]
+
+
+# ── 운영 모니터링 — Lambda 호출률 (최근 1h) ───────────────
+MOCKUP_LAMBDA_METRICS = [
+    {'fn': 'lifesync-batch-loader-lambda',         'invocations_1h': 4_320, 'errors_1h': 0, 'avg_duration_ms':   412},
+    {'fn': 'lifesync-ingest-lambda',               'invocations_1h': 8_640, 'errors_1h': 3, 'avg_duration_ms':   184},
+    {'fn': 'lifesync-recommendation-engine-lambda','invocations_1h':    24, 'errors_1h': 0, 'avg_duration_ms': 2_310},
+    {'fn': 'lifesync-wearable-stream-lambda',      'invocations_1h':12_480, 'errors_1h': 1, 'avg_duration_ms':    87},
+]
+
+
+# ── 운영 모니터링 — Glue ETL ──────────────────────────────
+MOCKUP_GLUE_LAST_RUN = {
+    'job_name':     'lifesync-glue-etl-processed',
+    'state':        'SUCCEEDED',
+    'started_at':   '2026-05-16 03:00:00',
+    'completed_at': '2026-05-16 03:47:21',
+    'duration_sec': 2_841,
+}
+
+MOCKUP_NEXT_BATCH = {
+    'rule_name':         'lifesync-daily-etl-rule',
+    'schedule':          'cron(0 3 * * ? *)',
+    'next_scheduled_at': '2026-05-17 03:00:00',
+}
+
+
+# ── AI 추천 — 카테고리·등급별 + TOP10 (Aurora 쿼리 fallback) ──
+MOCKUP_RECOMMEND_BY_CATEGORY = [
+    {'category': '카드',     'ctr': 31.2, 'cvr': 8.7},
+    {'category': '은행',     'ctr': 28.4, 'cvr': 9.1},
+    {'category': '헬스케어', 'ctr': 25.8, 'cvr': 6.2},
+    {'category': '보험',     'ctr': 19.1, 'cvr': 3.4},
+    {'category': '증권',     'ctr': 22.4, 'cvr': 4.8},
+]
+
+MOCKUP_RECOMMEND_BY_GRADE = [
+    {'grade': 'VIP',    'cvr': 12.4},
+    {'grade': 'GOLD',   'cvr':  8.7},
+    {'grade': 'SILVER', 'cvr':  5.2},
+    {'grade': 'BASIC',  'cvr':  3.9},
+    {'grade': 'CARE',   'cvr':  6.1},
+]
+
+MOCKUP_RECOMMEND_TOP10 = [
+    {'rank':  1, 'product': 'VIP 신용카드',      'category': '카드',     'recommended': 12_840, 'ctr': 31.2, 'cvr': 8.7},
+    {'rank':  2, 'product': 'PB 예금 패키지',    'category': '은행',     'recommended': 11_205, 'ctr': 28.4, 'cvr': 9.1},
+    {'rank':  3, 'product': '건강검진 패키지',   'category': '헬스케어', 'recommended':  9_012, 'ctr': 25.8, 'cvr': 6.2},
+    {'rank':  4, 'product': '암보험 라이트',     'category': '보험',     'recommended':  7_892, 'ctr': 22.4, 'cvr': 5.5},
+    {'rank':  5, 'product': 'ISA 절세 상품',     'category': '증권',     'recommended':  6_521, 'ctr': 21.1, 'cvr': 4.8},
+    {'rank':  6, 'product': 'VIP 헬스케어',      'category': '헬스케어', 'recommended':  5_914, 'ctr': 26.3, 'cvr': 7.1},
+    {'rank':  7, 'product': '자동차 보험 비교',  'category': '보험',     'recommended':  4_820, 'ctr': 18.5, 'cvr': 3.4},
+    {'rank':  8, 'product': '자유적금 플러스',   'category': '은행',     'recommended':  4_280, 'ctr': 19.8, 'cvr': 5.0},
+    {'rank':  9, 'product': '걷기 챌린지 앱',    'category': '헬스케어', 'recommended':  3_812, 'ctr': 15.4, 'cvr': 2.1},
+    {'rank': 10, 'product': '프리미엄 실손보험', 'category': '보험',     'recommended':  3_104, 'ctr': 17.2, 'cvr': 4.3},
+]
+
+
+# ── AI 추천 — 점수 분포 (DynamoDB scan fallback) ───────────
+MOCKUP_SCORE_DISTRIBUTION = {
+    'dynamic_score': [
+        {'bucket': '0-20',   'count':    342},
+        {'bucket': '20-40',  'count':  4_281},
+        {'bucket': '40-60',  'count': 18_512},
+        {'bucket': '60-80',  'count': 48_204},
+        {'bucket': '80-100', 'count': 28_661},
+    ],
+    'health_score': [
+        {'bucket': '0-20',   'count':    520},
+        {'bucket': '20-40',  'count':  5_018},
+        {'bucket': '40-60',  'count': 24_211},
+        {'bucket': '60-80',  'count': 42_874},
+        {'bucket': '80-100', 'count': 27_377},
+    ],
+}
