@@ -3,96 +3,181 @@
 {% block page_title %}Customer 360 · 고객 통합 프로필 및 추천 현황{% endblock %}
 
 {% block content %}
+<div class="detail-content">
 
-<!-- 상단 KPI 카드 (시안 02_customer360.png) -->
-<div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:16px;">
-    <div class="card" style="padding:16px;">
-        <div style="font-size:11px; color:#64748b;">총 회원 수</div>
-        <div style="font-size:24px; font-weight:700; color:#6366f1; margin-top:4px;">{{ '{:,}'.format(kpi.total_customers) }}</div>
-        <div style="font-size:10px; color:#94a3b8;">Aurora users_ref</div>
-    </div>
-    <div class="card" style="padding:16px;">
-        <div style="font-size:11px; color:#64748b;">VIP / GOLD</div>
-        <div style="font-size:24px; font-weight:700; color:#8b5cf6; margin-top:4px;">{{ '{:,}'.format(kpi.vip_gold_count) }} <span style="font-size:14px; color:#94a3b8;">({{ kpi.vip_gold_pct }}%)</span></div>
-        <div style="font-size:10px; color:#94a3b8;">우수 등급 비율</div>
-    </div>
-    <div class="card" style="padding:16px;">
-        <div style="font-size:11px; color:#64748b;">활성 캠페인</div>
-        <div style="font-size:24px; font-weight:700; color:#3b82f6; margin-top:4px;">{{ kpi.active_campaigns }} <span style="font-size:14px; color:#94a3b8;">건</span></div>
-        <div style="font-size:10px; color:#94a3b8;">campaign_master end_date >= today</div>
-    </div>
-    <div class="card" style="padding:16px;">
-        <div style="font-size:11px; color:#64748b;">24h 신규 가입</div>
-        <div style="font-size:24px; font-weight:700; color:#14b8a6; margin-top:4px;">{{ kpi.new_signup_24h }}</div>
-        <div style="font-size:10px; color:#94a3b8;">customer created_at</div>
-    </div>
-    <div class="card" style="padding:16px;">
-        <div style="font-size:11px; color:#64748b;">평균 AI Score</div>
-        <div style="font-size:24px; font-weight:700; color:#16a34a; margin-top:4px;">{{ kpi.avg_ai_score }}</div>
-        <div style="font-size:10px; color:#94a3b8;">DynamoDB dynamic_score</div>
-    </div>
-</div>
-
-<div class="card">
-    <form method="get" action="{{ url_for('users') }}">
-        <div class="search-bar">
-            <input class="form-input" type="text" name="q" placeholder="global_id · 이름 · 이메일 검색" value="{{ q }}" style="flex:1; min-width:200px;">
-            <select class="form-select" name="grade">
-                <option value="">전체 등급</option>
-                {% for g in grades %}
-                <option value="{{ g }}" {% if grade_filter == g %}selected{% endif %}>{{ g }}</option>
-                {% endfor %}
-            </select>
-            <button class="btn btn-primary" type="submit">검색</button>
-            {% if q or grade_filter %}
-            <a class="btn btn-ghost" href="{{ url_for('users') }}">초기화</a>
-            {% endif %}
+    <!-- 상단 row — 검색 박스 (큰) + KPI 3 (작은) — PPTX slide2 y=0 라인 -->
+    <div class="detail-section">
+        <div style="display:grid; grid-template-columns: 2.5fr 0.9fr 0.9fr 1fr; gap:8px;">
+            <div class="card" style="padding:10px 12px;">
+                <form method="get" action="{{ url_for('users') }}">
+                    <div style="font-size:11px; color:#64748b;">고객 검색</div>
+                    <div style="display:flex; gap:6px; margin-top:6px; align-items:center;">
+                        <input class="form-input" type="text" name="q"
+                               placeholder="global_id · 이름 · 이메일"
+                               value="{{ q }}" style="flex:1; padding:6px 10px;">
+                        <button class="btn btn-primary" type="submit" style="padding:6px 16px;">조회</button>
+                    </div>
+                </form>
+            </div>
+            <div class="card" style="padding:10px 12px; border-left:3px solid #6366f1;">
+                <div style="font-size:11px; color:#64748b;">추천 점수</div>
+                <div style="font-size:24px; font-weight:700; color:#6366f1; margin-top:4px;">
+                    {{ scores.dynamic_score if scores else '-' }}
+                </div>
+                <div style="font-size:10px; color:#94a3b8;">AI Score</div>
+            </div>
+            <div class="card" style="padding:10px 12px; border-left:3px solid #16a34a;">
+                <div style="font-size:11px; color:#64748b;">건강 점수</div>
+                <div style="font-size:24px; font-weight:700; color:#16a34a; margin-top:4px;">
+                    {{ scores.health_score if scores else '-' }}
+                </div>
+                <div style="font-size:10px; color:#94a3b8;">Wearable 기반</div>
+            </div>
+            <div class="card" style="padding:10px 12px; border-left:3px solid #f59e0b;">
+                <div style="font-size:11px; color:#64748b;">고객 등급</div>
+                <div style="margin-top:6px;">
+                    {% if customer %}
+                    <span class="badge badge-{{ customer.grade | lower }}" style="font-size:16px; padding:4px 14px;">{{ customer.grade }}</span>
+                    {% else %}<span style="font-size:18px; color:#94a3b8;">-</span>{% endif %}
+                </div>
+                <div style="font-size:10px; color:#94a3b8; margin-top:4px;">
+                    {% if customer %}{{ customer.name }}{% else %}고객 미선택{% endif %}
+                </div>
+            </div>
         </div>
-    </form>
-
-    <div class="result-count">총 {{ total }}명</div>
-
-    {% if users %}
-    <div class="table-wrap">
-        <table>
-            <thead>
-                <tr>
-                    <th>이름</th>
-                    <th>이메일</th>
-                    <th>등급</th>
-                    <th>회원번호</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for u in users %}
-                <tr>
-                    <td><strong>{{ u.name }}</strong></td>
-                    <td>{{ u.email }}</td>
-                    <td><span class="badge badge-{{ u.grade | lower }}">{{ u.grade }}</span></td>
-                    <td class="mono">{{ u.ls_user_id }}</td>
-                    <td><a class="table-link" href="{{ url_for('user_detail', global_id=u.global_id) }}">상세보기</a></td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
     </div>
 
-    {% if total_pages > 1 %}
-    <div class="pagination">
-        <a class="page-btn {% if page == 1 %}disabled{% endif %}"
-           href="{{ url_for('users', q=q, grade=grade_filter, page=page-1) }}">‹</a>
-        {% for p in range(1, total_pages + 1) %}
-        <a class="page-btn {% if p == page %}active{% endif %}"
-           href="{{ url_for('users', q=q, grade=grade_filter, page=p) }}">{{ p }}</a>
-        {% endfor %}
-        <a class="page-btn {% if page == total_pages %}disabled{% endif %}"
-           href="{{ url_for('users', q=q, grade=grade_filter, page=page+1) }}">›</a>
+    {% if not q %}
+    <div class="card" style="text-align:center; padding:30px;">
+        <div style="font-size:14px; color:#94a3b8;">고객 ID, 이름 또는 이메일을 입력하고 조회하세요.</div>
     </div>
-    {% endif %}
-
+    {% elif not customer %}
+    <div class="card" style="text-align:center; padding:30px;">
+        <div style="font-size:14px; color:#dc2626;">"{{ q }}" 에 해당하는 고객을 찾을 수 없습니다.</div>
+    </div>
     {% else %}
-    <p style="color:#94a3b8; font-size:14px; padding: 20px 0;">검색 결과가 없습니다.</p>
+
+    <!-- 메인 row — 큰 박스 3 (PPTX slide2 y=2.8): 최근 추천이력 / 최근 가입상품 / 추천 상품 -->
+    <div class="detail-section">
+        <div style="display:grid; grid-template-columns: 0.9fr 0.95fr 1.15fr; gap:8px;">
+
+            <!-- 최근 추천 이력 -->
+            <div class="card">
+                <div class="card-title">최근 추천 이력</div>
+                {% if recommend_history %}
+                <div class="table-wrap">
+                    <table style="font-size:12px;">
+                        <thead><tr><th>상품</th><th>시각</th><th>상태</th></tr></thead>
+                        <tbody>
+                            {% for r in recommend_history %}
+                            <tr>
+                                <td><strong>{{ r.product_name }}</strong></td>
+                                <td class="mono" style="font-size:11px;">{{ r.recommended_at[5:16] if r.recommended_at else '-' }}</td>
+                                <td>
+                                    {% if r.purchased_flag == 'Y' %}<span style="color:#16a34a;">✓ 구매</span>
+                                    {% elif r.clicked_flag == 'Y' %}<span style="color:#3b82f6;">○ 클릭</span>
+                                    {% else %}<span style="color:#94a3b8;">- 추천</span>{% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}<p style="color:#94a3b8; font-size:12px;">데이터 없음</p>{% endif %}
+            </div>
+
+            <!-- 최근 가입 상품 (purchased) -->
+            <div class="card">
+                <div class="card-title">최근 가입 상품</div>
+                {% set purchased = recommend_history | selectattr('purchased_flag', 'equalto', 'Y') | list %}
+                {% if purchased %}
+                <div class="table-wrap">
+                    <table style="font-size:12px;">
+                        <thead><tr><th>상품</th><th>가입 시각</th></tr></thead>
+                        <tbody>
+                            {% for r in purchased %}
+                            <tr>
+                                <td><strong>{{ r.product_name }}</strong></td>
+                                <td class="mono" style="font-size:11px;">{{ r.recommended_at[:16] if r.recommended_at else '-' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}<p style="color:#94a3b8; font-size:12px;">가입 이력 없음</p>{% endif %}
+            </div>
+
+            <!-- 추천 상품 (Redis Top 3) -->
+            <div class="card">
+                <div class="card-title">추천 상품</div>
+                {% if personalized and personalized.top3 %}
+                {% for r in personalized.top3 %}
+                <div style="background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:8px 10px; margin-bottom:6px;">
+                    <div style="font-size:10px; color:#94a3b8;">#{{ r.rank }} · {{ r.category }}</div>
+                    <div style="font-size:13px; font-weight:700; color:#1e293b; margin-top:2px;">{{ r.product }}</div>
+                    <div style="margin-top:4px; display:flex; align-items:center; gap:6px;">
+                        <div style="flex:1; background:#f1f5f9; border-radius:4px; height:6px;">
+                            <div style="height:100%; background:{{ r.color }}; width:{{ (r.ai_score * 100) | round }}%; border-radius:4px;"></div>
+                        </div>
+                        <span class="mono" style="font-size:10px; color:{{ r.color }}; font-weight:700;">AI {{ r.ai_score }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+                {% else %}<p style="color:#94a3b8; font-size:12px;">데이터 없음</p>{% endif %}
+            </div>
+
+        </div>
+    </div>
+
+    <!-- 하단 row — 큰 박스 2 (PPTX slide2 y=10.5): 최근 클릭 / 교차판매 추천 -->
+    <div class="detail-section">
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+
+            <!-- 최근 클릭 (clicked) -->
+            <div class="card">
+                <div class="card-title">최근 클릭</div>
+                {% set clicked = recommend_history | selectattr('clicked_flag', 'equalto', 'Y') | list %}
+                {% if clicked %}
+                <div class="table-wrap">
+                    <table style="font-size:12px;">
+                        <thead><tr><th>상품</th><th>클릭 시각</th><th>가입</th></tr></thead>
+                        <tbody>
+                            {% for r in clicked %}
+                            <tr>
+                                <td><strong>{{ r.product_name }}</strong></td>
+                                <td class="mono" style="font-size:11px;">{{ r.recommended_at[:16] if r.recommended_at else '-' }}</td>
+                                <td>{% if r.purchased_flag == 'Y' %}<span style="color:#16a34a;">✓</span>{% else %}<span style="color:#94a3b8;">-</span>{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}<p style="color:#94a3b8; font-size:12px;">클릭 이력 없음</p>{% endif %}
+            </div>
+
+            <!-- 교차판매 추천 -->
+            <div class="card">
+                <div class="card-title">교차판매 추천 ({{ crosssell | length }}건)</div>
+                <div class="table-wrap">
+                    <table style="font-size:12px;">
+                        <thead><tr><th>상품</th><th>카테고리</th><th>추천 사유</th></tr></thead>
+                        <tbody>
+                            {% for c in crosssell %}
+                            <tr>
+                                <td><strong>{{ c.product }}</strong></td>
+                                <td>{{ c.category }}</td>
+                                <td style="font-size:11px; color:#64748b;">{{ c.reason }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
     {% endif %}
+</div>
 </div>
 {% endblock %}

@@ -1,182 +1,191 @@
 {% extends 'base.html' %}
 {% block title %}운영 모니터링 – Admin{% endblock %}
-{% block page_title %}운영 모니터링 · AWS 인프라 + 데이터 흐름{% endblock %}
-
-{% block sidebar_extra %}
-<div class="sidebar-sep"></div>
-<div class="sidebar-section">섹션</div>
-<div class="sidebar-sub-item active" onclick="showTab(this, 'cloud')">Cloud Status</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'flow')">도메인 데이터 흐름</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'vm')">VM 상태</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'lambda')">Lambda 호출률</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'etl')">ETL · 배치</div>
-{% endblock %}
+{% block page_title %}운영 모니터링 · 멀티클라우드 인프라 + 데이터 흐름{% endblock %}
 
 {% block content %}
 <div class="detail-content">
 
-    <!-- Cloud Status -->
-    <div id="sec-cloud" class="detail-section active">
-        <div class="card">
-            <div class="card-title">Cloud Status · AWS 리소스</div>
-            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px;">
-                {% for c in cloud_status %}
-                <div style="background:#fff; border:1px solid #e2e8f0; border-left:3px solid {% if c.state == 'UP' or c.status == 'OK' %}#16a34a{% elif c.state == 'DOWN' or c.status == 'DOWN' %}#dc2626{% else %}#f59e0b{% endif %}; border-radius:8px; padding:12px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                        <span style="font-size:13px; font-weight:600;">{{ c.icon or '' }} {{ c.service or c.name }}</span>
-                        <span style="font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px; color:#fff; background:{% if c.state == 'UP' or c.status == 'OK' %}#16a34a{% elif c.state == 'DOWN' or c.status == 'DOWN' %}#dc2626{% else %}#f59e0b{% endif %};">{{ c.state or c.status }}</span>
+    <!-- 상단 네트워크 6 카드 (PPTX slide4 y=0 라벨들 — 카드로 확장) -->
+    <div class="detail-section">
+        <div style="display:grid; grid-template-columns: repeat(6, 1fr); gap:6px;">
+            <div class="card" style="padding:8px 10px; border-left:3px solid #6366f1;">
+                <div style="font-size:11px; color:#64748b;">Transit Gateway</div>
+                <div style="font-size:18px; font-weight:700; color:#16a34a; margin-top:2px;">● UP</div>
+                <div style="font-size:10px; color:#94a3b8; font-family:monospace;">{{ tgw.id[:18] }}…</div>
+                <div style="font-size:10px; color:#475569; margin-top:2px;">{{ tgw.attachments }} attachments</div>
+            </div>
+            <div class="card" style="padding:8px 10px; border-left:3px solid #6366f1;">
+                <div style="font-size:11px; color:#64748b;">Routing 상태</div>
+                <div style="font-size:18px; font-weight:700; color:#16a34a; margin-top:2px;">● UP</div>
+                <div style="font-size:10px; color:#94a3b8;">TGW Route Tables</div>
+                <div style="font-size:10px; color:#475569; margin-top:2px;">{{ tgw.attachments }} routes</div>
+            </div>
+            <div class="card" style="padding:8px 10px; border-left:3px solid #16a34a;">
+                <div style="font-size:11px; color:#64748b;">Site-to-Site VPN</div>
+                <div style="font-size:18px; font-weight:700; color:#16a34a; margin-top:2px;">● UP</div>
+                <div style="font-size:10px; color:#94a3b8;">AWS ↔ GCP / On-prem</div>
+                <div style="font-size:10px; color:#475569; margin-top:2px;">strongSwan IPsec</div>
+            </div>
+            <div class="card" style="padding:8px 10px; border-left:3px solid #16a34a;">
+                <div style="font-size:11px; color:#64748b;">VPN Tunnel 상태</div>
+                <div style="font-size:18px; font-weight:700; color:#16a34a; margin-top:2px;">{{ vpn.tunnels | length }}/{{ vpn.tunnels | length }} UP</div>
+                <div style="font-size:10px; color:#94a3b8;">TunnelState (CW)</div>
+                <div style="font-size:10px; color:#475569; margin-top:2px;">전체 ACTIVE</div>
+            </div>
+            <div class="card" style="padding:8px 10px; border-left:3px solid #3b82f6;">
+                <div style="font-size:11px; color:#64748b;">VPC 연결</div>
+                <div style="font-size:18px; font-weight:700; color:#16a34a; margin-top:2px;">{{ vpc_peering | length }} active</div>
+                <div style="font-size:10px; color:#94a3b8;">Peering / TGW Att</div>
+                <div style="font-size:10px; color:#475569; margin-top:2px;">Service ↔ Data ↔ Group</div>
+            </div>
+            <div class="card" style="padding:8px 10px; border-left:3px solid #f59e0b;">
+                <div style="font-size:11px; color:#64748b;">Traffic</div>
+                <div style="font-size:18px; font-weight:700; color:#f59e0b; margin-top:2px;">{{ vpn.tunnels[0].traffic_in_mbps if vpn.tunnels else 0 }} Mbps</div>
+                <div style="font-size:10px; color:#94a3b8;">VPC Flow Logs</div>
+                <div style="font-size:10px; color:#475569; margin-top:2px;">In · 실시간</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 메인 row — 좌 column (백엔드 서비스) + 우 column (계열사 7개) — PPTX slide4 y=2 -->
+    <div class="detail-section">
+        <div style="display:grid; grid-template-columns: 0.4fr 1fr; gap:8px;">
+
+            <!-- 좌측 column — 백엔드 서비스 6 (8.7 x 16.5cm 박스 안 세로 나열) -->
+            <div class="card" style="border-top:3px solid #16a34a;">
+                <div class="card-title" style="color:#16a34a;">백엔드 서비스</div>
+                {% for s in backend_services %}
+                <div style="padding:8px 0; border-bottom:1px solid #f1f5f9;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-size:12px; font-weight:600;">{{ s.service }}</span>
+                        <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; color:#fff; background:{% if s.state == 'UP' %}#16a34a{% else %}#dc2626{% endif %};">● {{ s.state }}</span>
                     </div>
-                    <div style="font-size:11px; color:#475569;">{{ c.note or c.detail or '' }}</div>
-                    {% if c.metric %}<div style="font-size:11px; color:#94a3b8; font-family:monospace; margin-top:2px;">{{ c.metric }}</div>{% endif %}
+                    <div style="font-size:11px; color:#475569; margin-top:2px;">{{ s.note }}</div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- 우측 column — 계열사 7개 (PPTX 1행 3개 + 2행 4개) -->
+            <div class="card" style="border-top:3px solid #f97316;">
+                <div class="card-title" style="color:#f97316;">▶ AWS 상태 · 계열사 7개 (CPU / Memory / API 연결)</div>
+
+                <!-- 1행 3개 (보험·인터넷보험·은행) -->
+                <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; margin-bottom:8px;">
+                    {% for a in affiliate_health[:3] %}
+                    <div style="background:#fff; border:1px solid #e2e8f0; border-left:3px solid {% if a.api_state == 'UP' %}#16a34a{% elif a.api_state == 'SLOW' %}#f59e0b{% else %}#dc2626{% endif %}; border-radius:6px; padding:8px 10px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:13px; font-weight:700;">{{ a.affiliate }}</span>
+                            <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; color:#fff; background:{% if a.api_state == 'UP' %}#16a34a{% elif a.api_state == 'SLOW' %}#f59e0b{% else %}#dc2626{% endif %};">{{ a.api_state }}</span>
+                        </div>
+                        <div style="font-size:11px; color:#475569; margin-top:4px;">CPU <strong>{{ a.cpu_pct }}%</strong> · Mem <strong>{{ a.mem_pct }}%</strong></div>
+                        <div style="font-size:10px; color:#94a3b8; margin-top:2px; font-family:monospace;">ping {{ a.last_ping }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <!-- 2행 4개 (증권·카드·헬스케어·병원) -->
+                <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px;">
+                    {% for a in affiliate_health[3:] %}
+                    <div style="background:#fff; border:1px solid #e2e8f0; border-left:3px solid {% if a.api_state == 'UP' %}#16a34a{% elif a.api_state == 'SLOW' %}#f59e0b{% else %}#dc2626{% endif %}; border-radius:6px; padding:8px 10px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:13px; font-weight:700;">{{ a.affiliate }}</span>
+                            <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; color:#fff; background:{% if a.api_state == 'UP' %}#16a34a{% elif a.api_state == 'SLOW' %}#f59e0b{% else %}#dc2626{% endif %};">{{ a.api_state }}</span>
+                        </div>
+                        <div style="font-size:11px; color:#475569; margin-top:4px;">CPU <strong>{{ a.cpu_pct }}%</strong> · Mem <strong>{{ a.mem_pct }}%</strong></div>
+                        <div style="font-size:10px; color:#94a3b8; margin-top:2px; font-family:monospace;">ping {{ a.last_ping }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- 하단 — Wearable VM 실시간 가로 박스 (PPTX slide4 y=13.6, 21.7×4.9cm) -->
+    <div class="detail-section">
+        <div class="card" style="border-top:3px solid #14b8a6;">
+            <div class="card-title" style="color:#14b8a6;">Wearable VM · 실시간 메트릭 (CloudWatch custom)</div>
+            <div style="display:grid; grid-template-columns: repeat(6, 1fr); gap:8px;">
+                {% for w in wearable_realtime %}
+                <div style="background:#fff; border:1px solid #e2e8f0; border-left:3px solid {% if w.state == 'OK' %}#16a34a{% elif w.state == 'WARN' %}#f59e0b{% else %}#dc2626{% endif %}; border-radius:6px; padding:8px 10px; text-align:center;">
+                    <div style="font-size:11px; color:#64748b;">{{ w.metric }}</div>
+                    <div style="font-size:18px; font-weight:700; color:#1e293b; margin-top:4px;" class="mono">{{ w.current }}</div>
+                    <div style="font-size:10px; color:#94a3b8; margin-top:2px;">{{ w.range }}</div>
+                    <div style="margin-top:4px;">
+                        <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; color:#fff; background:{% if w.state == 'OK' %}#16a34a{% elif w.state == 'WARN' %}#f59e0b{% else %}#dc2626{% endif %};">● {{ w.state }}</span>
+                    </div>
                 </div>
                 {% endfor %}
             </div>
         </div>
-
-        <div class="card" style="margin-top:16px;">
-            <div class="card-title">S3 Data Ingestion</div>
-            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px;">
-                <div><div style="font-size:11px; color:#94a3b8;">Raw 파일 수</div><div style="font-size:22px; font-weight:700;">{{ '{:,}'.format(s3_ingestion.raw_bucket_files) }}</div></div>
-                <div><div style="font-size:11px; color:#94a3b8;">오늘 적재</div><div style="font-size:22px; font-weight:700; color:#3b82f6;">{{ '{:,}'.format(s3_ingestion.today_ingested) }}</div></div>
-                <div><div style="font-size:11px; color:#94a3b8;">IoT/웨어러블</div><div style="font-size:22px; font-weight:700; color:#14b8a6;">{{ '{:,}'.format(s3_ingestion.iot_count) }}</div></div>
-                <div><div style="font-size:11px; color:#94a3b8;">실패</div><div style="font-size:22px; font-weight:700; color:{% if s3_ingestion.failed_count %}#dc2626{% else %}#16a34a{% endif %};">{{ s3_ingestion.failed_count }}</div></div>
-            </div>
-        </div>
     </div>
 
-    <!-- 도메인 데이터 흐름 -->
-    <div id="sec-flow" class="detail-section">
-        <div class="card">
-            <div class="card-title">도메인별 데이터 흐름 (S3 + Kinesis)</div>
-            <div class="table-wrap">
-                <table>
-                    <thead><tr><th>도메인</th><th>상태</th><th>마지막 적재</th><th>오늘 파일</th><th>소스</th></tr></thead>
-                    <tbody>
-                        {% for d in domain_flow %}
-                        <tr>
-                            <td><strong>{{ d.label }}</strong> <span style="color:#94a3b8; font-size:11px;">({{ d.domain }})</span></td>
-                            <td><span style="color:{% if d.state == 'OK' %}#16a34a{% elif d.state == 'WARN' %}#f59e0b{% else %}#dc2626{% endif %}; font-weight:700;">{{ d.state }}</span></td>
-                            <td class="mono">{{ d.last_upload_at }}</td>
-                            <td>{{ '{:,}'.format(d.files_today) }}</td>
-                            <td style="font-size:11px; color:#64748b; font-family:monospace;">{{ d.source }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <!-- VM 상태 -->
-    <div id="sec-vm" class="detail-section">
-        <div class="card">
-            <div class="card-title">EC2 VM 상태 (Group / Wearable)</div>
-            {% if vm_status %}
-            <div class="table-wrap">
-                <table>
-                    <thead><tr><th>VM ID</th><th>이름</th><th>상태</th><th>CPU</th><th>Mem</th></tr></thead>
-                    <tbody>
-                        {% for v in vm_status %}
-                        <tr>
-                            <td class="mono">{{ v.vm_id }}</td>
-                            <td>{{ v.name }}</td>
-                            <td><span style="color:{% if v.state == 'running' %}#16a34a{% else %}#94a3b8{% endif %}; font-weight:700;">{{ v.state }}</span></td>
-                            <td>{{ v.cpu_pct }}%</td>
-                            <td>{{ v.mem_pct }}%</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            <p style="color:#94a3b8;">VM 없음 (tag:Project=lifesync 없음)</p>
-            {% endif %}
-        </div>
-    </div>
-
-    <!-- Lambda 호출률 -->
-    <div id="sec-lambda" class="detail-section">
-        <div class="card">
-            <div class="card-title">Lambda 호출률 (최근 1h, CloudWatch)</div>
-            <div class="table-wrap">
-                <table>
-                    <thead><tr><th>함수</th><th>호출 수</th><th>에러</th><th>평균 응답</th></tr></thead>
-                    <tbody>
-                        {% for l in lambda_metrics %}
-                        <tr>
-                            <td class="mono">{{ l.fn }}</td>
-                            <td>{{ '{:,}'.format(l.invocations_1h) }}</td>
-                            <td style="color:{% if l.errors_1h %}#dc2626{% else %}#16a34a{% endif %}; font-weight:700;">{{ l.errors_1h }}</td>
-                            <td class="mono">{{ l.avg_duration_ms }}ms</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <!-- ETL · 배치 -->
-    <div id="sec-etl" class="detail-section">
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+    <!-- 보조 — 도메인 데이터 흐름 + Lambda 호출률 + Glue ETL -->
+    <div class="detail-section">
+        <div style="display:grid; grid-template-columns: 1.2fr 1fr 1fr; gap:8px;">
             <div class="card">
-                <div class="card-title">Glue 마지막 실행</div>
+                <div class="card-title">도메인별 데이터 흐름</div>
+                <div class="table-wrap">
+                    <table style="font-size:11px;">
+                        <thead><tr><th>도메인</th><th>상태</th><th>마지막 적재</th><th>오늘 파일</th></tr></thead>
+                        <tbody>
+                            {% for d in domain_flow %}
+                            <tr>
+                                <td><strong>{{ d.label }}</strong></td>
+                                <td><span style="color:{% if d.state == 'OK' %}#16a34a{% elif d.state == 'WARN' %}#f59e0b{% else %}#dc2626{% endif %}; font-weight:700;">{{ d.state }}</span></td>
+                                <td class="mono">{{ d.last_upload_at }}</td>
+                                <td>{{ '{:,}'.format(d.files_today) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">Lambda 호출률 (1h)</div>
+                <div class="table-wrap">
+                    <table style="font-size:11px;">
+                        <thead><tr><th>함수</th><th>호출</th><th>err</th></tr></thead>
+                        <tbody>
+                            {% for l in lambda_metrics %}
+                            <tr>
+                                <td class="mono">{{ l.fn[:24] }}</td>
+                                <td>{{ '{:,}'.format(l.invocations_1h) }}</td>
+                                <td style="color:{% if l.errors_1h %}#dc2626{% else %}#16a34a{% endif %}; font-weight:700;">{{ l.errors_1h }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">Glue / 배치</div>
                 {% if glue_last %}
-                <div style="font-size:13px;">
-                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">Job</span><span class="mono">{{ glue_last.job_name }}</span></div>
-                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">상태</span><strong style="color:{% if glue_last.state == 'SUCCEEDED' %}#16a34a{% else %}#f59e0b{% endif %};">{{ glue_last.state }}</strong></div>
-                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">시작</span><span class="mono">{{ glue_last.started_at }}</span></div>
-                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">완료</span><span class="mono">{{ glue_last.completed_at }}</span></div>
-                    <div style="display:flex; justify-content:space-between; padding:6px 0;"><span style="color:#64748b;">소요</span><strong>{{ glue_last.duration_sec }}s</strong></div>
+                <div style="font-size:11px; margin-bottom:6px;">
+                    <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">Job</span><span class="mono" style="font-size:10px;">{{ glue_last.job_name[:24] }}</span></div>
+                    <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">상태</span><strong style="color:{% if glue_last.state == 'SUCCEEDED' %}#16a34a{% else %}#f59e0b{% endif %};">{{ glue_last.state }}</strong></div>
+                    <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">완료</span><span class="mono" style="font-size:10px;">{{ glue_last.completed_at[:16] }}</span></div>
                 </div>
-                {% else %}
-                <p style="color:#94a3b8;">Glue Job 없음</p>
                 {% endif %}
-            </div>
-            <div class="card">
-                <div class="card-title">다음 배치 예정</div>
                 {% if next_batch %}
-                <div style="font-size:13px;">
-                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">Rule</span><span class="mono">{{ next_batch.rule_name }}</span></div>
-                    <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">Schedule</span><span class="mono">{{ next_batch.schedule }}</span></div>
-                    <div style="display:flex; justify-content:space-between; padding:6px 0;"><span style="color:#64748b;">다음 실행</span><strong>{{ next_batch.next_scheduled_at }}</strong></div>
+                <div style="font-size:11px; padding-top:4px; border-top:1px solid #e2e8f0;">
+                    <div style="color:#64748b;">다음 실행: <strong>{{ next_batch.next_scheduled_at }}</strong></div>
                 </div>
-                {% else %}
-                <p style="color:#94a3b8;">EventBridge rule 없음</p>
+                {% endif %}
+                {% if recent_errors %}
+                <div style="font-size:11px; padding-top:6px; margin-top:6px; border-top:1px solid #e2e8f0;">
+                    <div style="color:#64748b; font-weight:600; margin-bottom:4px;">최근 오류:</div>
+                    {% for e in recent_errors[:2] %}
+                    <div style="font-size:10px; padding:2px 0;">
+                        <span class="mono">{{ e.time }}</span> ·
+                        <strong style="color:{% if e.severity == 'ERROR' %}#dc2626{% else %}#f59e0b{% endif %};">{{ e.severity }}</strong>
+                        {{ e.message[:30] }}
+                    </div>
+                    {% endfor %}
+                </div>
                 {% endif %}
             </div>
         </div>
-
-        {% if recent_errors %}
-        <div class="card" style="margin-top:16px;">
-            <div class="card-title">최근 오류</div>
-            <div class="table-wrap">
-                <table>
-                    <thead><tr><th>시각</th><th>시스템</th><th>레벨</th><th>메시지</th></tr></thead>
-                    <tbody>
-                        {% for e in recent_errors %}
-                        <tr>
-                            <td class="mono">{{ e.time }}</td>
-                            <td>{{ e.system }}</td>
-                            <td><strong style="color:{% if e.severity == 'ERROR' %}#dc2626{% else %}#f59e0b{% endif %};">{{ e.severity }}</strong></td>
-                            <td>{{ e.message }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        {% endif %}
     </div>
-
 </div>
-
-<script>
-function showTab(el, id) {
-    document.querySelectorAll('.sidebar-sub-item').forEach(n => n.classList.remove('active'));
-    document.querySelectorAll('.detail-section').forEach(s => s.classList.remove('active'));
-    el.classList.add('active');
-    document.getElementById('sec-' + id).classList.add('active');
-}
-</script>
 {% endblock %}

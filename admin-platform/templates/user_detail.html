@@ -2,16 +2,6 @@
 {% block title %}{{ user.name }} – Admin{% endblock %}
 {% block page_title %}유저 상세{% endblock %}
 
-{% block sidebar_extra %}
-<div class="sidebar-sep"></div>
-<div class="sidebar-section">섹션</div>
-<div class="sidebar-sub-item active" onclick="showTab(this, 'info')">계정 정보</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'scores')">AI 분석</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'consent')">동의 현황</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'recommend')">추천 이력</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'identity')">제휴사 매핑</div>
-{% endblock %}
-
 {% block content %}
 <a class="back-link" href="{{ url_for('users') }}">
     <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -21,9 +11,9 @@
 </a>
 
 <!-- Customer 360 요약 (시안 02_customer360.png 상단 3카드) -->
-<div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; margin-bottom:16px;">
-    <div class="card" style="padding:16px;">
-        <div style="display:flex; align-items:center; gap:12px;">
+<div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:10px;">
+    <div class="card" style="padding:10px 12px;">
+        <div style="display:flex; align-items:center; gap:8px;">
             <div style="width:48px; height:48px; border-radius:50%; background:#6366f1; color:#fff; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700;">
                 {% if scores and scores.dynamic_score %}{{ scores.dynamic_score | float | round | int }}{% else %}-{% endif %}
             </div>
@@ -37,7 +27,7 @@
         </div>
     </div>
 
-    <div class="card" style="padding:16px;">
+    <div class="card" style="padding:10px 12px;">
         <div style="font-size:11px; color:#64748b;">종합 점수 (DynamoDB)</div>
         <div style="font-size:28px; font-weight:700; color:#16a34a; margin-top:4px;">
             {{ scores.dynamic_score if scores else '-' }}
@@ -51,7 +41,7 @@
         {% endif %}
     </div>
 
-    <div class="card" style="padding:16px;">
+    <div class="card" style="padding:10px 12px;">
         <div style="font-size:11px; color:#64748b;">Next Best Action</div>
         {% if scores and scores.next_best_action %}
         <div style="font-size:13px; font-weight:600; color:#1e293b; margin-top:6px; line-height:1.4;">{{ scores.next_best_action }}</div>
@@ -66,10 +56,37 @@
     </div>
 </div>
 
+<!-- Personalized Recommendation Top 3 (Redis) + 교차판매 (시안 02_customer360.png 중앙 카드) -->
+{% if personalized and personalized.top3 %}
+<div class="card" style="margin-bottom:10px;">
+    <div class="card-title">Personalized Recommendation · Redis Top 3</div>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px;">
+        {% for r in personalized.top3 %}
+        <div style="background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:12px; position:relative;">
+            <div style="font-size:11px; color:#94a3b8;">#{{ r.rank }} · {{ r.category }}</div>
+            <div style="font-size:14px; font-weight:700; color:#1e293b; margin-top:4px;">{{ r.product }}</div>
+            <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
+                <div style="flex:1; background:#f1f5f9; border-radius:4px; height:8px;">
+                    <div style="height:100%; background:{{ r.color }}; width:{{ (r.ai_score * 100) | round }}%; border-radius:4px;"></div>
+                </div>
+                <span class="mono" style="font-size:11px; color:{{ r.color }}; font-weight:700;">AI {{ r.ai_score }}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    <div style="margin-top:12px; padding:8px 12px; background:#fff7ed; border-left:3px solid #f97316; border-radius:4px; font-size:12px; color:#7c2d12;">
+        🔗 교차판매: <strong>{{ personalized.crosssell_note }}</strong>
+        <span style="margin-left:8px; font-size:10px; color:#94a3b8; font-family:monospace;">
+            {{ personalized.source }} (TTL {{ personalized.ttl_minutes }}m)
+        </span>
+    </div>
+</div>
+{% endif %}
+
 <div class="detail-content">
 
     <!-- 계정 정보 -->
-    <div id="sec-info" class="detail-section active">
+    <div id="sec-info" class="detail-section">
         <div class="card">
             <div class="card-title">계정 정보</div>
             <div class="info-row">
@@ -267,12 +284,4 @@
 
 </div>
 
-<script>
-function showTab(el, id) {
-    document.querySelectorAll('.sidebar-sub-item').forEach(n => n.classList.remove('active'));
-    document.querySelectorAll('.detail-section').forEach(s => s.classList.remove('active'));
-    el.classList.add('active');
-    document.getElementById('sec-' + id).classList.add('active');
-}
-</script>
 {% endblock %}

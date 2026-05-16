@@ -4,8 +4,8 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "256",
   "memory": "512",
-  "executionRoleArn": "arn:aws:iam::732264765472:role/lifesync-EcsTaskExecutionRole",
-  "taskRoleArn": "arn:aws:iam::732264765472:role/lifesync-EcsAdminTaskRole",
+  "executionRoleArn": "arn:aws:iam::732264765472:role/lifesync-dev-EcsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::732264765472:role/lifesync-dev-EcsTaskRole",
   "containerDefinitions": [
     {
       "name": "admin",

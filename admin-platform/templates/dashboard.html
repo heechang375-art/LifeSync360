@@ -2,201 +2,127 @@
 {% block title %}Executive Dashboard – Admin{% endblock %}
 {% block page_title %}Executive Dashboard · 전체 현황{% endblock %}
 
-{% block sidebar_extra %}
-<div class="sidebar-sep"></div>
-<div class="sidebar-section">섹션</div>
-<div class="sidebar-sub-item active" onclick="showTab(this, 'kpi')">KPI 요약</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'cloud')">Cloud Status</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 's3')">S3 Ingestion</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'grade')">등급 분포</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'campaign')">활성 캠페인</div>
-<div class="sidebar-sub-item" onclick="showTab(this, 'funnel')">추천 전환</div>
-{% endblock %}
-
 {% block content %}
 <div class="detail-content">
 
-    <!-- KPI 요약 -->
-    <div id="sec-kpi" class="detail-section active">
-        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
-            <div class="card" style="padding:18px;">
-                <div style="font-size:12px; color:#64748b;">총 고객 수</div>
-                <div style="font-size:28px; font-weight:700; color:#6366f1; margin-top:4px;">{{ '{:,}'.format(kpi.total_customers) }}</div>
-                <div style="font-size:11px; color:#94a3b8;">Aurora users_ref / DynamoDB</div>
+    <!-- 상단 5 KPI (단일 값) — PPTX slide1 y=0 라인 -->
+    <div class="detail-section">
+        <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:8px;">
+            {% for k in kpi_top %}
+            <div class="card" style="padding:10px 12px; border-left:3px solid {{ k.color }};">
+                <div style="font-size:11px; color:#64748b;">{{ k.label }}</div>
+                <div style="font-size:22px; font-weight:700; color:{{ k.color }}; margin-top:4px;">{{ k.value }}</div>
+                <div style="font-size:10px; color:#94a3b8; margin-top:2px;">{{ k.sub }}</div>
             </div>
-            <div class="card" style="padding:18px;">
-                <div style="font-size:12px; color:#64748b;">총 추천 건수</div>
-                <div style="font-size:28px; font-weight:700; color:#3b82f6; margin-top:4px;">{{ '{:,}'.format(kpi.total_recommend) }}</div>
-                <div style="font-size:11px; color:#94a3b8;">customer_recommend_history</div>
-            </div>
-            <div class="card" style="padding:18px;">
-                <div style="font-size:12px; color:#64748b;">CTR (7일)</div>
-                <div style="font-size:28px; font-weight:700; color:#f59e0b; margin-top:4px;">{{ kpi.ctr_7d }}%</div>
-                <div style="font-size:11px; color:#94a3b8;">dashboard_log 클릭 비율</div>
-            </div>
-            <div class="card" style="padding:18px;">
-                <div style="font-size:12px; color:#64748b;">CVR (7일)</div>
-                <div style="font-size:28px; font-weight:700; color:#16a34a; margin-top:4px;">{{ kpi.cvr_7d }}%</div>
-                <div style="font-size:11px; color:#94a3b8;">recommend → purchase 전환</div>
-            </div>
-            <div class="card" style="padding:18px;">
-                <div style="font-size:12px; color:#64748b;">Redis Cache</div>
-                <div style="font-size:22px; font-weight:700; color:#8b5cf6; margin-top:4px;">{{ '{:,}'.format(kpi.redis_cache_keys) }} keys</div>
-                <div style="font-size:11px; color:#94a3b8;">hit-rate {{ kpi.redis_hit_rate }}%</div>
-            </div>
-            <div class="card" style="padding:18px;">
-                <div style="font-size:12px; color:#64748b;">실시간 호출</div>
-                <div style="font-size:22px; font-weight:700; color:#14b8a6; margin-top:4px;">{{ kpi.req_per_sec }} req/s</div>
-                <div style="font-size:11px; color:#94a3b8;">ALB · p95 {{ kpi.p95_latency_ms }}ms</div>
-            </div>
+            {% endfor %}
         </div>
     </div>
 
-    <!-- Cloud Status -->
-    <div id="sec-cloud" class="detail-section">
-        <div class="card">
-            <div class="card-title">Cloud Status</div>
-            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px;">
-                {% for c in cloud_status %}
-                <div style="background:#fff; border:1px solid #e2e8f0; border-left:3px solid {% if c.state == 'UP' or c.status == 'OK' %}#16a34a{% elif c.state == 'DOWN' or c.status == 'DOWN' %}#dc2626{% else %}#f59e0b{% endif %}; border-radius:8px; padding:12px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                        <span style="font-size:13px; font-weight:600;">{{ c.icon or '' }} {{ c.service or c.name }}</span>
-                        <span style="font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px; color:#fff; background:{% if c.state == 'UP' or c.status == 'OK' %}#16a34a{% elif c.state == 'DOWN' or c.status == 'DOWN' %}#dc2626{% else %}#f59e0b{% endif %};">{{ c.state or c.status }}</span>
+    <!-- 중단 4 KPI (단일 값) — PPTX slide1 y=2.8 라인 -->
+    <div class="detail-section">
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px;">
+            {% for k in kpi_mid %}
+            <div class="card" style="padding:10px 12px; border-left:3px solid {{ k.color }};">
+                <div style="font-size:11px; color:#64748b;">{{ k.label }}</div>
+                <div style="font-size:22px; font-weight:700; color:{{ k.color }}; margin-top:4px;">{{ k.value }}</div>
+                <div style="font-size:10px; color:#94a3b8; margin-top:2px;">{{ k.sub }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- 메인 4 큰 박스 — PPTX slide1 y=5.4 라인 (AWS는 세로로 큼) -->
+    <div class="detail-section">
+        <div style="display:grid; grid-template-columns: 0.9fr 1.2fr 1.1fr 1.4fr; gap:8px; align-items:start;">
+
+            <!-- AWS 상태 박스 (세로로 가장 김, 6 서비스) -->
+            <div class="card" style="border-top:3px solid #f97316;">
+                <div class="card-title" style="color:#f97316;">▶ AWS 상태</div>
+                {% for s in aws_status %}
+                <div style="padding:6px 0; border-bottom:1px solid #f1f5f9;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-size:12px; font-weight:600;">{{ s.service }}</span>
+                        <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; color:#fff; background:{% if s.state == 'UP' %}#16a34a{% else %}#dc2626{% endif %};">● {{ s.state }}</span>
                     </div>
-                    <div style="font-size:11px; color:#475569;">{{ c.note or c.detail or '' }}</div>
-                    {% if c.metric %}<div style="font-size:11px; color:#94a3b8; font-family:monospace; margin-top:2px;">{{ c.metric }}</div>{% endif %}
+                    <div style="font-size:11px; color:#475569;">{{ s.metric }}</div>
+                    <div style="font-size:10px; color:#94a3b8; font-family:monospace;">{{ s.detail }}</div>
                 </div>
                 {% endfor %}
             </div>
-        </div>
-    </div>
 
-    <!-- S3 Ingestion -->
-    <div id="sec-s3" class="detail-section">
-        <div class="card">
-            <div class="card-title">S3 Data Ingestion</div>
-            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px;">
-                <div><div style="font-size:11px; color:#94a3b8;">Raw Bucket 파일 수</div><div style="font-size:22px; font-weight:700; color:#1e293b;">{{ '{:,}'.format(s3_ingestion.raw_bucket_files) }}</div></div>
-                <div><div style="font-size:11px; color:#94a3b8;">오늘 적재</div><div style="font-size:22px; font-weight:700; color:#3b82f6;">{{ '{:,}'.format(s3_ingestion.today_ingested) }}</div></div>
-                <div><div style="font-size:11px; color:#94a3b8;">IoT/웨어러블</div><div style="font-size:22px; font-weight:700; color:#14b8a6;">{{ '{:,}'.format(s3_ingestion.iot_count) }}</div></div>
-                <div><div style="font-size:11px; color:#94a3b8;">처리 실패</div><div style="font-size:22px; font-weight:700; color:{% if s3_ingestion.failed_count %}#dc2626{% else %}#16a34a{% endif %};">{{ s3_ingestion.failed_count }}</div></div>
-            </div>
-            {% if s3_ingestion.last_upload %}
-            <div style="margin-top:12px; padding:8px 12px; background:#f8fafc; border-radius:6px; font-size:12px; color:#475569;">
-                마지막 업로드: <strong>{{ s3_ingestion.last_upload.time }}</strong>
-                · {{ s3_ingestion.last_upload.file }}
-                · {{ s3_ingestion.last_upload.size_mb }}MB
-            </div>
-            {% endif %}
-        </div>
-    </div>
-
-    <!-- 등급 분포 -->
-    <div id="sec-grade" class="detail-section">
-        <div class="card">
-            <div class="card-title">등급 분포</div>
-            {% set total = grade_dist.values() | sum %}
-            <div class="grade-dist">
-                {% for g in grades %}
-                {% set cnt = grade_dist.get(g, 0) %}
-                {% set pct = ((cnt / total * 100) | round(0)) if total > 0 else 0 %}
-                <div class="grade-dist-row">
-                    <span class="grade-dist-name">{{ g }}</span>
-                    <div class="grade-dist-track">
-                        <div class="grade-dist-fill fill-{{ g | lower }}" style="width: {{ pct }}%"></div>
+            <!-- GCP 상태 박스 -->
+            <div class="card" style="border-top:3px solid #3b82f6;">
+                <div class="card-title" style="color:#3b82f6;">▶ GCP 상태</div>
+                {% for s in gcp_status %}
+                <div style="padding:6px 0; border-bottom:1px solid #f1f5f9;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-size:12px; font-weight:600;">{{ s.service }}</span>
+                        <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; color:#fff; background:#3b82f6;">● {{ s.state }}</span>
                     </div>
-                    <span class="grade-dist-cnt">{{ cnt }}</span>
+                    <div style="font-size:11px; color:#475569;">{{ s.metric }}</div>
+                    <div style="font-size:10px; color:#94a3b8; font-family:monospace;">{{ s.detail }}</div>
                 </div>
                 {% endfor %}
             </div>
+
+            <!-- S3 적재 상세 박스 -->
+            <div class="card" style="border-top:3px solid #14b8a6;">
+                <div class="card-title" style="color:#14b8a6;">S3 적재 상세</div>
+                {% for r in s3_box %}
+                <div style="padding:6px 0; border-bottom:1px solid #f1f5f9;">
+                    <div style="font-size:11px; color:#64748b;">{{ r.label }}</div>
+                    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:2px;">
+                        <span style="font-size:16px; font-weight:700; color:#1e293b;">{{ r.value }}</span>
+                        <span style="font-size:10px; color:#94a3b8; font-family:monospace;">{{ r.note }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- 플랫폼 가입률 박스 (전체 + 5 연령별) -->
+            <div class="card" style="border-top:3px solid #6366f1;">
+                <div class="card-title" style="color:#6366f1;">플랫폼 가입률</div>
+                <div style="padding:6px 0; border-bottom:2px solid #e2e8f0; margin-bottom:6px;">
+                    <div style="font-size:11px; color:#64748b;">전체</div>
+                    <div style="font-size:28px; font-weight:700; color:#6366f1;">{{ signup_box.overall }}%</div>
+                </div>
+                {% for r in signup_box.by_age %}
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;">
+                    <span style="width:50px; font-size:11px; font-weight:600;">{{ r.age }}</span>
+                    <div style="flex:1; background:#f1f5f9; border-radius:4px; height:10px;">
+                        <div style="height:100%; background:#6366f1; width:{{ r.signup_rate }}%; border-radius:4px;"></div>
+                    </div>
+                    <span class="mono" style="font-size:11px; width:48px; text-align:right; color:#6366f1; font-weight:700;">{{ r.signup_rate }}%</span>
+                    <span class="mono" style="font-size:10px; width:55px; text-align:right; color:#94a3b8;">{{ '{:,}'.format(r.count) }}</span>
+                </div>
+                {% endfor %}
+            </div>
+
         </div>
     </div>
 
-    <!-- 활성 캠페인 -->
-    <div id="sec-campaign" class="detail-section">
+    <!-- 하단 — 최근 업로드 파일 리스트 (PPTX 14.1 x 4.4cm 큰 박스) -->
+    <div class="detail-section">
         <div class="card">
-            <div class="card-title">활성 캠페인</div>
-            {% if active_campaigns %}
+            <div class="card-title">최근 업로드 파일</div>
             <div class="table-wrap">
-                <table>
-                    <thead><tr><th>캠페인명</th><th>대상 등급</th><th>기간</th></tr></thead>
+                <table style="font-size:12px;">
+                    <thead><tr><th>시각</th><th>파일</th><th>크기</th><th>소스</th><th>상태</th></tr></thead>
                     <tbody>
-                        {% for c in active_campaigns %}
+                        {% for u in recent_uploads %}
                         <tr>
-                            <td><strong>{{ c.campaign_name }}</strong></td>
-                            <td><span class="badge badge-{{ c.target_grade | lower }}">{{ c.target_grade }}</span></td>
-                            <td class="mono">{{ c.start_date }} ~ {{ c.end_date }}</td>
+                            <td class="mono">{{ u.time }}</td>
+                            <td style="font-family:monospace; font-size:11px;">{{ u.file }}</td>
+                            <td class="mono">{{ u.size }}</td>
+                            <td style="font-size:11px; color:#64748b;">{{ u.source }}</td>
+                            <td><strong style="color:{% if u.state == 'OK' %}#16a34a{% else %}#dc2626{% endif %};">● {{ u.state }}</strong></td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
-            {% else %}
-            <p style="color:#94a3b8; font-size:14px;">진행 중인 캠페인이 없습니다.</p>
-            {% endif %}
-        </div>
-    </div>
-
-    <!-- 추천 전환 funnel -->
-    <div id="sec-funnel" class="detail-section">
-        <div class="card">
-            <div class="card-title">상품별 추천 → 클릭 → 가입</div>
-            {% if product_funnel %}
-            <div class="search-bar" style="margin-bottom:16px;">
-                <select class="form-select" onchange="filterFunnel(this.value)">
-                    <option value="">전체 계열사</option>
-                    {% for key, label in consent_labels.items() %}
-                    <option value="{{ key }}">{{ label }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="table-wrap">
-                <table>
-                    <thead><tr><th>상품명</th><th>계열사</th><th>추천수</th><th>클릭률</th><th>가입률</th></tr></thead>
-                    <tbody id="funnel-tbody">
-                        {% for item in product_funnel %}
-                        <tr data-affiliate="{{ item.affiliate }}">
-                            <td><strong>{{ item.product_name }}</strong></td>
-                            <td>{{ consent_labels.get(item.affiliate, item.affiliate) }}</td>
-                            <td>{{ item.recommended }}</td>
-                            <td>
-                                <div class="funnel-bar-row">
-                                    <div class="funnel-bar-track"><div class="funnel-bar-click" style="width:{{ item.click_rate }}%"></div></div>
-                                    <span class="funnel-pct">{{ item.click_rate }}%</span>
-                                    <span class="mono">({{ item.clicked }})</span>
-                                </div>
-                            </td>
-                            <td>
-                                <div class="funnel-bar-row">
-                                    <div class="funnel-bar-track"><div class="funnel-bar-purchase" style="width:{{ item.purchase_rate }}%"></div></div>
-                                    <span class="funnel-pct">{{ item.purchase_rate }}%</span>
-                                    <span class="mono">({{ item.purchased }})</span>
-                                </div>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            <p style="color:#94a3b8; font-size:14px;">추천 데이터가 없습니다.</p>
-            {% endif %}
         </div>
     </div>
 
 </div>
-
-<script>
-function showTab(el, id) {
-    document.querySelectorAll('.sidebar-sub-item').forEach(n => n.classList.remove('active'));
-    document.querySelectorAll('.detail-section').forEach(s => s.classList.remove('active'));
-    el.classList.add('active');
-    document.getElementById('sec-' + id).classList.add('active');
-}
-function filterFunnel(val) {
-    document.querySelectorAll('#funnel-tbody tr').forEach(tr => {
-        tr.style.display = (!val || tr.dataset.affiliate === val) ? '' : 'none';
-    });
-}
-</script>
 {% endblock %}

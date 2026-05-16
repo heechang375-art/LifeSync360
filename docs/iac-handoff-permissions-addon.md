@@ -163,6 +163,43 @@ NEW_TASK=$(aws cloudformation describe-stack-resources --stack-name lifesync-dev
 
 ---
 
+## 7. 추가 변경 (2026-05-16) — Role 이름 안정화 + 추가 권한
+
+**파일**: `21-lifesync-ecs-existing-vpc.yaml`, `admin-platform/taskdef.json`, `lifesync360-platform/taskdef.json`
+
+### 7-1. Role 이름 안정화 (CFN 자동 hash 제거)
+ECS task 부팅 시 "토큰 에러"의 진짜 원인: **taskdef.json의 Role ARN이 실제 존재하지 않는 Role 가리킴**.
+- 이전: `lifesync-EcsTaskExecutionRole` (hardcoded) — 21 yaml에 RoleName 명시 안 됨 → 자동 hash 이름 (`lifesync-dev-21-lifesync-ecs-exist-EcsExecutionRole-Dm8CCIe7mct9`)
+- 수정: 21 yaml의 EcsExecutionRole / EcsTaskRole 에 `RoleName` 명시
+  - `lifesync-dev-EcsTaskExecutionRole`
+  - `lifesync-dev-EcsTaskRole`
+- taskdef.json (admin / lifesync360) Role ARN을 안정적 이름으로 정정
+
+### 7-2. ExecutionRole 에 admin secrets 권한 추가
+admin taskdef는 `lifesync/aurora`, `lifesync/admin` secrets 사용 — ExecutionRole에 `secretsmanager:GetSecretValue` 권한 없으면 secret fetch 실패.
+
+```yaml
+- Sid: SecretsManagerForAdminAndAurora
+  Action: [secretsmanager:GetSecretValue, secretsmanager:DescribeSecret]
+  Resource:
+    - arn:aws:secretsmanager:...:secret:lifesync/aurora-*
+    - arn:aws:secretsmanager:...:secret:lifesync/admin-*
+    - arn:aws:secretsmanager:...:secret:lifesync/redis-*
+- Sid: KmsDecryptForSecretsManager  (kms:ViaService=secretsmanager.*)
+```
+
+### 7-3. EcsTaskRole 추가 권한 (admin 측)
+- Lambda InvokeFunction: `lifesync-onprem-customer-query`, `lifesync-onprem-query-lambda`
+- DynamoDB Get/Scan/Query: `lifesync_customer_result`
+
+### 7-4. 배포 전 필수
+- Secrets Manager 에 `lifesync/aurora` (host/user/password), `lifesync/admin` (secret_key/username/password) 생성 + value 입력
+- `lifesync/redis` (host) 도 필요시 생성
+- 21-stack update-stack 으로 Role 변경 반영 (downtime 없음)
+- ECS service force-new-deployment
+
+---
+
 ## 5. 알려진 한계
 
 - **`10.0.0.0/16` 하드코딩**: 08-database.yaml 의 VPC CIDR. VPC CIDR 이 다르면 yaml 수정 필요. 정식 fix 는 `VpcCidr` Parameter 추가.
