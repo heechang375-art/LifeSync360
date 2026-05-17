@@ -2,8 +2,8 @@ version: 0.2
 
 env:
   variables:
-    CONTAINER_NAME: admin
-    APP_DIR: admin-platform
+    CONTAINER_NAME: app
+    APP_DIR: lifesync360-platform
 
 phases:
   pre_build:
