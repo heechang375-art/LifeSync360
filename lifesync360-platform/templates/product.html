@@ -59,8 +59,8 @@
     }
     emitEvent('product_view', '{{ item.name | e }}');
     document.getElementById('apply-btn').addEventListener('click', () => {
-        emitEvent('purchased', '{{ item.name | e }}');
-        alert('신청이 접수되었습니다.\n담당자 확인 후 연락드리겠습니다.');
+        emitEvent('apply_started', '{{ item.name | e }}');
+        window.location.href = '/product/{{ item.id }}/apply';
     });
 </script>
 </body>

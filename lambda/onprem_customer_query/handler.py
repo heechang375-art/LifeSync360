@@ -3,14 +3,35 @@
 VPN을 통해 온프레미스 Private API 직접 호출
 
 event = {
-    "action": "login"|"register"|"get_user"|"get_consent"|"save_consent"|"get_profile"|"get_pii"|"get_all",
+    "action": "login"|"register"|"get_user"|"get_consent"|"save_consent"|"get_profile"|"get_pii"|"get_all"
+            | "local_lab_status"
+            | "count_master_customer" | "count_users" | "count_users_consented"
+            | "get_master_customer" | "get_identity_map"
+            | "vm_health" | "mysql_health" | "tokenization_health",
     ...params
 }
+
+응답 형식: { statusCode, body(JSON string) }
+- local_lab_status 의 body 는 RFC draft (api-health-check-06) 부분 호환 + admin 호환:
+  {
+    "status": "pass" | "fail" | "warn",      # aggregate
+    "time":   "2026-05-17T15:00:00Z",
+    "environments": [                         # admin 호환 (admin _ping_local_lab 가 추출)
+      { "env": "VirtualBox · ls-db", "state": "Running", "note": "MySQL 8.0 · 192.168.56.11" },
+      ...
+    ],
+    "checks": {                                # RFC draft 표준
+      "vm:ls-db":      [{ "status":"pass", "componentType":"system",    "time":"..." }],
+      "service:mysql": [{ "status":"pass", "componentType":"datastore", "time":"..." }],
+      ...
+    }
+  }
 """
 import json
 import os
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 PRIVATE_API_URL = os.environ['PRIVATE_API_URL']   # http://172.16.1.73
 
@@ -38,6 +59,46 @@ def _resp(status, body):
         'headers': {'Content-Type': 'application/json'},
         'body': json.dumps(body, ensure_ascii=False),
     }
+
+
+def _now_iso():
+    return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def _local_lab_status():
+    """
+    온프레미스 Private API /internal/health/local-lab 호출 → 응답 가공.
+    PrivateAPI 응답 가정 (운영):
+      { "environments": [ {"env","state","note"}, ... ],
+        "checks":      { "vm:ls-db":[{...}], "service:mysql":[{...}], ... } }
+    실패 시 status=fail + 빈 환경 반환 (admin 안 깨짐, RFC draft 호환).
+    """
+    try:
+        raw = _api_get('/internal/health/local-lab')
+        envs   = raw.get('environments') or []
+        checks = raw.get('checks') or {}
+        # aggregate status: 하나라도 fail 이면 fail, warn 하나라도 있으면 warn, 외엔 pass
+        all_states = [c['status'] for arr in checks.values() for c in arr if isinstance(c, dict) and c.get('status')]
+        if any(s == 'fail' for s in all_states):
+            agg = 'fail'
+        elif any(s == 'warn' for s in all_states):
+            agg = 'warn'
+        else:
+            agg = 'pass'
+        return {
+            'status':       agg,
+            'time':         _now_iso(),
+            'environments': envs,
+            'checks':       checks,
+        }
+    except Exception as e:
+        return {
+            'status':       'fail',
+            'time':         _now_iso(),
+            'environments': [],
+            'checks':       {},
+            'output':       f'PrivateAPI 호출 실패: {str(e)}',
+        }
 
 
 def handler(event, context):
@@ -85,6 +146,41 @@ def handler(event, context):
                 'customer':  customer,
                 'consents':  consent.get('consents', []),
             }
+        elif action == 'local_lab_status':
+            # P4 r38~43, r60. 온프레 환경/서비스 종합 헬스. HTTPError 발생 시에도
+            # _local_lab_status 안에서 catch 해서 status=fail 형식으로 반환.
+            result = _local_lab_status()
+
+        # ── 통합 카운트 (P1 r3,4,5) ────────────────────────────
+        elif action == 'count_master_customer':
+            # P1 r3 — master_customer COUNT(*) WHERE customer_status='ACTIVE'
+            result = _api_get('/internal/count/master_customer?status=ACTIVE')
+        elif action == 'count_users':
+            # P1 r4 — users COUNT(ls_user_id) WHERE user_status='ACTIVE'
+            result = _api_get('/internal/count/users?status=ACTIVE')
+        elif action == 'count_users_consented':
+            # P1 r5 — users JOIN consent (active + consent_flag='Y' + revoke_dt IS NULL)
+            result = _api_get('/internal/count/users_consented')
+
+        # ── 단건 조회 (P2 r13~17, r22) ──────────────────────────
+        elif action == 'get_master_customer':
+            # P2 r13,r17 — master_customer 단건 (first_created_dt, customer_status)
+            result = _api_get(f'/internal/master_customer/{body["global_id"]}')
+        elif action == 'get_identity_map':
+            # P2 r22 — customer_identity_map (active_flag='Y' 활성 계열사 + source_customer_id)
+            result = _api_get(f'/internal/identity_map/{body["global_id"]}')
+
+        # ── 단일 헬스 체크 (P4 r40,41,42) ───────────────────────
+        elif action == 'vm_health':
+            # P4 r40 — VirtualBox VM 단건 health. body['vm_id'] in (ls-db,ls-token,ls-api,ls-vpngw)
+            result = _api_get(f'/internal/health/vm/{body["vm_id"]}')
+        elif action == 'mysql_health':
+            # P4 r41 — local MySQL health (8 tables alive 여부)
+            result = _api_get('/internal/health/mysql')
+        elif action == 'tokenization_health':
+            # P4 r42 — Tokenization Service (FastAPI /health on port 8000)
+            result = _api_get('/internal/health/tokenization')
+
         else:
             return _resp(400, {'error': f'지원하지 않는 action: {action}'})
 

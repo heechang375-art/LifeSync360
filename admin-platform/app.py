@@ -12,6 +12,8 @@ USE_MOCK             = os.environ.get('USE_MOCK', 'true').lower() != 'false'  # 
 ADMIN_USER           = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS           = os.environ.get('ADMIN_PASSWORD', 'admin1234')  # TODO: 운영 배포 시 env var로 교체
 DYNAMO_TABLE         = os.environ.get('DYNAMO_TABLE', 'lifesync-scores')
+DDB_SEGMENT_TABLE    = os.environ.get('DDB_SEGMENT_TABLE',    'analytics_segment_performance')
+DDB_DEMOGRAPHIC_TABLE= os.environ.get('DDB_DEMOGRAPHIC_TABLE','analytics_demographic_summary')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 PRIVATE_API_URL      = os.environ.get('PRIVATE_API_URL', '')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
@@ -51,6 +53,7 @@ from mockup_data import (
     MOCKUP_WEARABLE_REALTIME,
     MOCKUP_AFFILIATE_HEALTH, MOCKUP_BACKEND_SERVICES,
     MOCKUP_REDIS_PERSONALIZED, MOCKUP_CROSSSELL_LIST, MOCKUP_RECENT_ERRORS,
+    MOCKUP_LOCAL_LAB,
 )
 
 
@@ -456,34 +459,394 @@ def _ping_local_lab():
         return []
 
 
+def _ping_kinesis():
+    """
+    P1 r23, P4 r15,r16. Kinesis 스트림 상태 + 데이터 처리 지연.
+    INGESTION_STREAM_NAME (default 'lifesync-kinesis-wearable-stream') 단건 조회.
+    실패/스트림 없음 시 빈 dict.
+    """
+    from datetime import datetime, timezone, timedelta
+    stream = os.environ.get('INGESTION_STREAM_NAME', 'lifesync-kinesis-wearable-stream')
+    try:
+        info = _boto('kinesis').describe_stream_summary(StreamName=stream).get('StreamDescriptionSummary', {})
+    except Exception:
+        return {}
+    out = {
+        'stream_name'  : info.get('StreamName', stream),
+        'status'       : info.get('StreamStatus', 'UNKNOWN'),
+        'shard_count'  : info.get('OpenShardCount', 0),
+        'retention_hrs': info.get('RetentionPeriodHours', 0),
+    }
+    # CloudWatch 평균 IteratorAgeMilliseconds (최근 5분)
+    try:
+        cw    = _boto('cloudwatch')
+        now   = datetime.now(timezone.utc)
+        start = now - timedelta(minutes=5)
+        stat  = cw.get_metric_statistics(
+            Namespace='AWS/Kinesis', MetricName='GetRecords.IteratorAgeMilliseconds',
+            Dimensions=[{'Name': 'StreamName', 'Value': stream}],
+            StartTime=start, EndTime=now, Period=60, Statistics=['Average'],
+        )
+        pts = stat.get('Datapoints', [])
+        out['iterator_age_avg_ms'] = round(sum(p['Average'] for p in pts) / len(pts), 1) if pts else 0
+    except Exception:
+        out['iterator_age_avg_ms'] = None
+    return out
+
+
+def _ping_wearable_metrics():
+    """
+    P4 r45~r52. Wearable custom namespace 'LifeSync/Wearable' 5분 평균.
+    metrics: heart_rate / blood_pressure_sys / blood_pressure_dia / spo2 / steps / alerts.
+    """
+    from datetime import datetime, timezone, timedelta
+    try:
+        cw    = _boto('cloudwatch')
+        now   = datetime.now(timezone.utc)
+        start = now - timedelta(minutes=5)
+    except Exception:
+        return []
+    out = []
+    for metric, label in [
+        ('heart_rate',        '심박수'),
+        ('blood_pressure_sys','수축기혈압'),
+        ('blood_pressure_dia','이완기혈압'),
+        ('spo2',              '산소포화도'),
+        ('steps',             '걸음수'),
+        ('activity_kcal',     '활동칼로리'),
+        ('alerts',            '이상이벤트'),
+    ]:
+        try:
+            stat = cw.get_metric_statistics(
+                Namespace='LifeSync/Wearable', MetricName=metric,
+                StartTime=start, EndTime=now, Period=60, Statistics=['Average','Sum'],
+            )
+            pts = stat.get('Datapoints', [])
+            if pts:
+                avg = round(sum(p.get('Average', 0) for p in pts) / len(pts), 1)
+                tot = round(sum(p.get('Sum', 0) for p in pts), 1)
+                out.append({'metric': metric, 'label': label, 'avg': avg, 'sum': tot})
+            else:
+                out.append({'metric': metric, 'label': label, 'avg': None, 'sum': 0})
+        except Exception:
+            out.append({'metric': metric, 'label': label, 'avg': None, 'sum': 0})
+    return out
+
+
+def _ping_emr():
+    """
+    P4 r13. EMR 클러스터 상태 (lifesync 태그 또는 RUNNING/WAITING).
+    """
+    try:
+        clusters = _boto('emr').list_clusters(
+            ClusterStates=['STARTING','BOOTSTRAPPING','RUNNING','WAITING','TERMINATING']
+        ).get('Clusters', [])
+    except Exception:
+        return []
+    return [{
+        'cluster_id'  : c.get('Id'),
+        'name'        : c.get('Name'),
+        'state'       : c.get('Status', {}).get('State'),
+        'state_change_at': str(c.get('Status', {}).get('StateChangeReason', {}).get('Code') or ''),
+    } for c in clusters]
+
+
+def _ddb_score_distribution():
+    """
+    P3 r22. lifesync_customer_result Scan + dynamic_score 0~100 히스토그램.
+    Scan 비용 주의 — 운영은 lambda 일배치 결과를 mart 테이블에 두고 read 권장.
+    """
+    try:
+        items = get_dynamo_table().scan(ProjectionExpression='dynamic_score').get('Items', [])
+    except Exception:
+        return []
+    buckets = [0]*10  # 0~9, 10~19, ..., 90~100
+    for it in items:
+        try:
+            s = int(float(it.get('dynamic_score', 0)))
+            idx = min(s // 10, 9)
+            buckets[idx] += 1
+        except Exception:
+            continue
+    return [{'bucket': f'{i*10}~{i*10+9}', 'count': buckets[i]} for i in range(10)]
+
+
+def _ddb_prob_distribution():
+    """
+    P3 r8. lifesync_customer_result Scan + vip_prob/signup_prob/rec_prob 평균 + 0.0~1.0 히스토그램.
+    """
+    try:
+        items = get_dynamo_table().scan(
+            ProjectionExpression='vip_prob, signup_prob, rec_prob'
+        ).get('Items', [])
+    except Exception:
+        return {}
+    sums  = {'vip_prob': 0.0, 'signup_prob': 0.0, 'rec_prob': 0.0}
+    cnts  = {'vip_prob': 0,   'signup_prob': 0,   'rec_prob': 0}
+    bins  = {k: [0]*10 for k in sums}  # 0.0~0.1, ..., 0.9~1.0
+    for it in items:
+        for k in sums:
+            try:
+                v = float(it.get(k, 0))
+                sums[k] += v
+                cnts[k] += 1
+                idx = min(int(v * 10), 9)
+                bins[k][idx] += 1
+            except Exception:
+                continue
+    return {
+        'avg': {k: round(sums[k] / cnts[k], 3) if cnts[k] else 0 for k in sums},
+        'histogram': {k: [{'bin': f'{i*0.1:.1f}~{(i+1)*0.1:.1f}', 'count': bins[k][i]} for i in range(10)] for k in bins},
+    }
+
+
+# ── GCP SDK 헬퍼 ────────────────────────────────────────────
+# 인증: ADC (Application Default Credentials) — GOOGLE_APPLICATION_CREDENTIALS env
+#   또는 Workload Identity Federation. 인증 없으면 모든 함수가 안전하게 [] / {} 반환.
+GCP_PROJECT_ID  = os.environ.get('GCP_PROJECT_ID', '')
+GCP_BQ_DATASET  = os.environ.get('GCP_BQ_DATASET', 'lifesync_curated')
+GCP_VERTEX_LOC  = os.environ.get('GCP_VERTEX_LOCATION', 'asia-northeast3')
+
+_gcp_bq_client      = None
+_gcp_aip_initialized= False
+_gcp_mon_client     = None
+
+
+def _get_bq():
+    global _gcp_bq_client
+    if not GCP_PROJECT_ID:
+        return None
+    if _gcp_bq_client is None:
+        try:
+            from google.cloud import bigquery as _bq
+            _gcp_bq_client = _bq.Client(project=GCP_PROJECT_ID)
+        except Exception:
+            return None
+    return _gcp_bq_client
+
+
+def _init_aip():
+    global _gcp_aip_initialized
+    if not GCP_PROJECT_ID:
+        return False
+    if not _gcp_aip_initialized:
+        try:
+            from google.cloud import aiplatform
+            aiplatform.init(project=GCP_PROJECT_ID, location=GCP_VERTEX_LOC)
+            _gcp_aip_initialized = True
+        except Exception:
+            return False
+    return _gcp_aip_initialized
+
+
+def _get_mon():
+    global _gcp_mon_client
+    if not GCP_PROJECT_ID:
+        return None
+    if _gcp_mon_client is None:
+        try:
+            from google.cloud import monitoring_v3 as _mon
+            _gcp_mon_client = _mon.MetricServiceClient()
+        except Exception:
+            return None
+    return _gcp_mon_client
+
+
 def _stub_gcp_status():
-    """GCP 상태 — 실 SDK 호출 코드 자리. credential 셋업 전까지는 빈 응답."""
-    # TODO(gcp): google-cloud-bigquery / google-cloud-aiplatform 셋업 후 활성화.
-    # from google.cloud import bigquery, aiplatform
-    # bq    = bigquery.Client()
-    # vai   = aiplatform.Model.list()
-    return []
+    """
+    P4 r32~36 — GCP BigQuery / Vertex AI / Cloud Run 상태.
+    Cloud Monitoring API 로 service 별 uptime/health 조회. 인증/호출 실패 시 빈 list.
+    """
+    mon = _get_mon()
+    if mon is None:
+        return []
+    try:
+        # BQ 쿼리 잡 카운트 (최근 7일) — Monitoring 'bigquery.googleapis.com/job/num_in_flight'
+        from google.cloud import monitoring_v3 as _mon
+        from google.protobuf import timestamp_pb2
+        import time
+        now      = int(time.time())
+        interval = _mon.TimeInterval({
+            'end_time':   timestamp_pb2.Timestamp(seconds=now),
+            'start_time': timestamp_pb2.Timestamp(seconds=now - 7 * 86400),
+        })
+        out = []
+        for service, metric in [
+            ('BigQuery',  'bigquery.googleapis.com/query/count'),
+            ('Vertex AI', 'aiplatform.googleapis.com/prediction/online/prediction_count'),
+            ('Cloud Run', 'run.googleapis.com/request_count'),
+        ]:
+            try:
+                req = _mon.ListTimeSeriesRequest({
+                    'name':     f'projects/{GCP_PROJECT_ID}',
+                    'filter':   f'metric.type="{metric}"',
+                    'interval': interval,
+                    'view':     _mon.ListTimeSeriesRequest.TimeSeriesView.HEADERS,
+                })
+                series = list(mon.list_time_series(request=req))
+                out.append({'service': service, 'state': 'UP', 'series_count': len(series)})
+            except Exception as e:
+                out.append({'service': service, 'state': 'UNKNOWN', 'error': str(e)[:80]})
+        return out
+    except Exception:
+        return []
 
 
 def _stub_vertex_metrics():
-    """Vertex AI 모델 메트릭 — 실 SDK 호출 자리."""
-    # TODO(gcp): aiplatform.Model.list() → get_model_evaluation() 호출
-    return {}
+    """
+    P3 r22 — Vertex AI 모델 평가 메트릭 (Precision/Recall 등).
+    Model.list() → 최신 모델의 evaluation 가져옴.
+    """
+    if not _init_aip():
+        return {}
+    try:
+        from google.cloud import aiplatform
+        models = aiplatform.Model.list(order_by='create_time desc')
+        if not models:
+            return {}
+        latest = models[0]
+        evals  = latest.list_model_evaluations()
+        if not evals:
+            return {'model_id': latest.resource_name, 'evaluations': []}
+        ev = list(evals)[0]
+        return {
+            'model_id'   : latest.resource_name,
+            'display_name': latest.display_name,
+            'create_time': str(latest.create_time),
+            'metrics'    : dict(ev.metrics) if hasattr(ev, 'metrics') else {},
+        }
+    except Exception:
+        return {}
 
 
 def _stub_feature_importance():
-    """Feature Importance — Vertex AI GCS json 읽기 자리."""
-    # TODO(gcp): GCS bucket 'lifesync-curated/feature_importance/latest.json' read
-    return []
+    """
+    P3 r9 — Feature Importance: BigQuery lifesync_curated.ai_feature_table 컬럼별 분포.
+    """
+    bq = _get_bq()
+    if bq is None:
+        return []
+    try:
+        sql = f"""
+            SELECT column_name, AVG(value) AS avg_val, STDDEV(value) AS std_val
+            FROM `{GCP_PROJECT_ID}.{GCP_BQ_DATASET}.ai_feature_table`
+            GROUP BY column_name
+            ORDER BY ABS(avg_val) DESC
+            LIMIT 20
+        """
+        return [dict(row) for row in bq.query(sql).result()]
+    except Exception:
+        return []
+
+
+def _stub_bigquery_analytics(query_kind='recommendation_mart'):
+    """
+    P3 r17,r28 — BigQuery 마트 ad-hoc 조회.
+      recommendation_mart : lifesync_curated.recommendation_mart GROUP BY name
+      customer_summary    : lifesync_serving.v_customer_summary 샘플
+      prediction_result   : lifesync_ml.*_prediction_result Precision/Recall
+    """
+    bq = _get_bq()
+    if bq is None:
+        return []
+    try:
+        if query_kind == 'recommendation_mart':
+            sql = f"""SELECT recommendation_name, COUNT(*) AS cnt
+                      FROM `{GCP_PROJECT_ID}.{GCP_BQ_DATASET}.recommendation_mart`
+                      GROUP BY recommendation_name ORDER BY cnt DESC LIMIT 20"""
+        elif query_kind == 'customer_summary':
+            sql = f"""SELECT * FROM `{GCP_PROJECT_ID}.lifesync_serving.v_customer_summary` LIMIT 100"""
+        elif query_kind == 'prediction_result':
+            sql = f"""SELECT model_name,
+                             COUNTIF(actual_label IS NOT NULL) AS labeled,
+                             AVG(IF(predicted_label = actual_label, 1.0, 0.0)) AS accuracy
+                      FROM `{GCP_PROJECT_ID}.lifesync_ml.vip_prediction_result`
+                      WHERE actual_label IS NOT NULL
+                      GROUP BY model_name"""
+        else:
+            return []
+        return [dict(row) for row in bq.query(sql).result()]
+    except Exception:
+        return []
+
+
+_redis_client = None
+
+
+def _get_redis():
+    global _redis_client
+    if _redis_client is None:
+        host = os.environ.get('REDIS_HOST')
+        if not host:
+            return None
+        try:
+            import redis as _redis_lib
+            _redis_client = _redis_lib.Redis(
+                host=host,
+                port=int(os.environ.get('REDIS_PORT', '6379')),
+                decode_responses=True,
+                socket_connect_timeout=3,
+                socket_timeout=3,
+            )
+        except Exception:
+            return None
+    return _redis_client
 
 
 def _stub_redis_personalized(global_id):
-    """Redis Personalized Top 3 — redis-py ZREVRANGE 자리."""
-    # TODO(redis): ElastiCache 가동 후 redis-py 활성화.
-    # import redis
-    # r = redis.Redis(host=os.environ['REDIS_HOST'], port=6379)
-    # top = r.zrevrange(f'recommend:{global_id}', 0, 2, withscores=True)
-    return {}
+    """
+    Redis Personalized Top 3 — ZREVRANGE rec:{global_id} 0 N WITHSCORES (TTL 6h).
+    miss/실패 시 빈 dict 반환 → /users/<id> 라우트에서 MOCKUP_REDIS_PERSONALIZED fallback.
+    """
+    r = _get_redis()
+    if r is None:
+        return {}
+    try:
+        pairs = r.zrevrange(f'rec:{global_id}', 0, 2, withscores=True)
+        if not pairs:
+            return {}
+        return {
+            'top': [{'product_id': pid, 'score': float(score)} for pid, score in pairs],
+            'source': 'redis',
+        }
+    except Exception:
+        return {}
+
+
+# ── analytics batch 결과 read 헬퍼 (P3 r10/r12/r13) ─────────────
+def _aurora_recommend_trend_7day():
+    """Aurora customer_recommend_daily 에서 최근 7일치 + 7일 평균. P3 r10."""
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT date, recommended, ctr, cvr, "
+                "       AVG(ctr) OVER() AS avg_ctr, "
+                "       AVG(cvr) OVER() AS avg_cvr "
+                "FROM customer_recommend_daily "
+                "WHERE date >= CURDATE() - INTERVAL 7 DAY "
+                "ORDER BY date"
+            )
+            rows = cur.fetchall()
+        for r in rows:
+            r['date'] = r['date'].strftime('%m-%d') if r.get('date') else ''
+        return rows
+    except Exception:
+        return []
+
+
+def _ddb_query_today(table_name, sk_prefix=None):
+    """analytics_* DDB 테이블 오늘 snapshot_date 조회. sk_prefix 있으면 begins_with."""
+    from datetime import date as _date
+    from boto3.dynamodb.conditions import Key
+    today = _date.today().isoformat()
+    try:
+        table = boto3.resource('dynamodb', region_name=AWS_REGION).Table(table_name)
+        kw = {'KeyConditionExpression': Key('snapshot_date').eq(today)}
+        if sk_prefix:
+            kw['KeyConditionExpression'] &= Key('segment_key').begins_with(sk_prefix)
+        return table.query(**kw).get('Items', [])
+    except Exception:
+        return []
 
 
 # ── Auth ──────────────────────────────────────────────
@@ -741,10 +1104,12 @@ def ai():
         ai_kpi             = MOCKUP_AI_KPI
         vertex_ai          = MOCKUP_VERTEX_AI
         feature_importance = MOCKUP_FEATURE_IMPORTANCE
+        recommend_trend    = MOCKUP_RECOMMEND_TREND
     else:
         ai_kpi             = MOCKUP_AI_KPI
         vertex_ai          = _stub_vertex_metrics() or MOCKUP_VERTEX_AI
         feature_importance = _stub_feature_importance() or MOCKUP_FEATURE_IMPORTANCE
+        recommend_trend    = _aurora_recommend_trend_7day() or MOCKUP_RECOMMEND_TREND
 
     return render_template('ai.html',
         active='ai',
@@ -756,8 +1121,287 @@ def ai():
         vertex_ai=vertex_ai,
         feature_importance=feature_importance,
         age_model_ratio=MOCKUP_AGE_MODEL_RATIO,
-        recommend_trend=MOCKUP_RECOMMEND_TREND,
+        recommend_trend=recommend_trend,
     )
+
+
+# ── 신규 admin JSON API — analytics batch 결과 read ─────────────
+from flask import jsonify  # noqa: E402
+
+@app.route('/api/admin/recommend-trend')
+@login_required
+def api_admin_recommend_trend():
+    """P3 r10. Aurora customer_recommend_daily 최근 7일 + 평균."""
+    rows = _aurora_recommend_trend_7day() if not USE_MOCK else MOCKUP_RECOMMEND_TREND
+    return jsonify(rows)
+
+
+@app.route('/api/admin/segment-performance')
+@login_required
+def api_admin_segment_performance():
+    """P3 r12. analytics_segment_performance 오늘자 — dim prefix 필터 가능 (?dim=gender)."""
+    dim = request.args.get('dim')  # gender / age_band / region / income / asset
+    prefix = f'{dim}#' if dim else None
+    rows = _ddb_query_today(DDB_SEGMENT_TABLE, sk_prefix=prefix)
+    return jsonify(rows)
+
+
+@app.route('/api/admin/demographic-summary')
+@login_required
+def api_admin_demographic_summary():
+    """P3 r13. analytics_demographic_summary 오늘자 — dim prefix 필터 가능."""
+    dim = request.args.get('dim')
+    prefix = f'{dim}#' if dim else None
+    rows = _ddb_query_today(DDB_DEMOGRAPHIC_TABLE, sk_prefix=prefix)
+    return jsonify(rows)
+
+
+@app.route('/api/admin/local-lab-status')
+@login_required
+def api_admin_local_lab_status():
+    """P4 r38~43, r60. 온프레 환경/서비스 종합 헬스 — Lambda onprem-query 'local_lab_status' 경유."""
+    if USE_MOCK:
+        return jsonify({'status': 'pass', 'time': '',
+                        'environments': MOCKUP_LOCAL_LAB, 'checks': {}})
+    data = _call_onprem('local_lab_status')
+    return jsonify(data or {'status': 'fail', 'environments': [], 'checks': {}, 'output': 'onprem lambda unavailable'})
+
+
+# ── 시트 정의 /api/* 라우트 — 기존 _ping_* / _stub_* 함수 JSON wrap ─────────────
+
+@app.route('/api/dashboard/summary')
+@login_required
+def api_dashboard_summary():
+    """P1 r29. KPI 종합 — 통합/플랫폼/분석 고객 수 + Aurora 추천 이력 + DDB 결과."""
+    if USE_MOCK:
+        return jsonify({'kpi_top': MOCKUP_KPI_TOP, 'kpi_mid': MOCKUP_KPI_MID})
+    return jsonify({
+        'master_customer'  : _call_onprem('count_master_customer'),
+        'users_active'     : _call_onprem('count_users'),
+        'users_consented'  : _call_onprem('count_users_consented'),
+    })
+
+
+@app.route('/api/s3/status')
+@login_required
+def api_s3_status():
+    """P1 r30. S3 적재 현황 — boto3 list_buckets + list_objects."""
+    return jsonify(_ping_s3_ingestion() if not USE_MOCK else MOCKUP_S3_INGESTION_BOX)
+
+
+@app.route('/api/cloud/status')
+@login_required
+def api_cloud_status():
+    """P1 r31. AWS/GCP 헬스 종합."""
+    if USE_MOCK:
+        return jsonify({'aws': MOCKUP_AWS_STATUS_DETAIL, 'gcp': MOCKUP_GCP_STATUS_DETAIL})
+    return jsonify({'aws': _ping_cloud_status(), 'gcp': _stub_gcp_status() or MOCKUP_GCP_STATUS_DETAIL})
+
+
+@app.route('/api/customer/profile/<global_id>')
+@login_required
+def api_customer_profile(global_id):
+    """P2 r44. customer_pii_secure + customer_360_profile + master_customer + users."""
+    if USE_MOCK:
+        return jsonify(MOCK_USERS.get(global_id, {}))
+    return jsonify(_call_onprem('get_all', global_id=global_id))
+
+
+@app.route('/api/customer/ai-result/<global_id>')
+@login_required
+def api_customer_ai_result(global_id):
+    """P2 r45. DDB lifesync_customer_result GetItem."""
+    if USE_MOCK:
+        return jsonify(MOCK_SCORES.get(global_id, {}))
+    try:
+        return jsonify(get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item', {}))
+    except Exception:
+        return jsonify({})
+
+
+@app.route('/api/customer/recommend/<global_id>')
+@login_required
+def api_customer_recommend(global_id):
+    """P2 r46. Redis ZREVRANGE rec:{global_id} 0 N WITHSCORES."""
+    data = _stub_redis_personalized(global_id) if not USE_MOCK else MOCKUP_REDIS_PERSONALIZED
+    return jsonify(data or {})
+
+
+@app.route('/api/customer/history/<global_id>')
+@login_required
+def api_customer_history(global_id):
+    """P2 r47. Aurora customer_recommend_history."""
+    if USE_MOCK:
+        return jsonify(MOCK_RECOMMEND_HISTORY.get(global_id, []))
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT p.product_name, r.recommended_at, r.clicked_flag, r.purchased_flag "
+                "FROM customer_recommend_history r "
+                "JOIN product_master p ON r.product_id = p.product_id "
+                "WHERE r.global_id=%s ORDER BY r.recommended_at DESC LIMIT 50",
+                (global_id,),
+            )
+            return jsonify([{**r, 'recommended_at': str(r['recommended_at'])} for r in cur.fetchall()])
+    except Exception:
+        return jsonify([])
+
+
+@app.route('/api/customer/activity/<global_id>')
+@login_required
+def api_customer_activity(global_id):
+    """P2 r48. Aurora customer_dashboard_log."""
+    if USE_MOCK:
+        return jsonify([])
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT view_time, page_path, action_type "
+                "FROM customer_dashboard_log WHERE global_id=%s "
+                "ORDER BY view_time DESC LIMIT 50",
+                (global_id,),
+            )
+            return jsonify([{**r, 'view_time': str(r['view_time'])} for r in cur.fetchall()])
+    except Exception:
+        return jsonify([])
+
+
+@app.route('/api/ai/summary')
+@login_required
+def api_ai_summary():
+    """P3. AI KPI 종합 (DDB 등급 분포 + Aurora CTR/CVR + Vertex AI metric)."""
+    return jsonify({
+        'ai_kpi'        : MOCKUP_AI_KPI,
+        'vertex_metrics': (_stub_vertex_metrics() if not USE_MOCK else {}) or {},
+        'score_dist'    : (_ddb_score_distribution() if not USE_MOCK else []),
+    })
+
+
+@app.route('/api/ai/recommend-stats')
+@login_required
+def api_ai_recommend_stats():
+    """P3. 추천 통계 — vip/signup/rec prob 평균 + 히스토그램."""
+    return jsonify(_ddb_prob_distribution() if not USE_MOCK else {})
+
+
+@app.route('/api/bigquery/analytics')
+@login_required
+def api_bigquery_analytics():
+    """P3 r28. BigQuery 마트 ad-hoc — ?kind=recommendation_mart|customer_summary|prediction_result."""
+    kind = request.args.get('kind', 'recommendation_mart')
+    return jsonify(_stub_bigquery_analytics(kind) if not USE_MOCK else [])
+
+
+@app.route('/api/network/tgw')
+@login_required
+def api_network_tgw():
+    """P4 r56. TGW + Attachment 상태."""
+    return jsonify(_ping_tgw() if not USE_MOCK else MOCKUP_TGW)
+
+
+@app.route('/api/network/vpn')
+@login_required
+def api_network_vpn():
+    """P4 r57. VPN 터널 상태 + CloudWatch 트래픽."""
+    return jsonify(_ping_vpn() if not USE_MOCK else MOCKUP_VPN)
+
+
+@app.route('/api/vm/group')
+@login_required
+def api_vm_group():
+    """P4 r58. Group VM EC2 인스턴스 (tag Project=lifesync)."""
+    if USE_MOCK:
+        return jsonify(MOCKUP_AFFILIATE_HEALTH)
+    rows = _ping_vm_status() or []
+    return jsonify([r for r in rows if 'wearable' not in str(r.get('tag', '')).lower()])
+
+
+@app.route('/api/vm/wearable')
+@login_required
+def api_vm_wearable():
+    """P4 r59. Wearable VM + CloudWatch custom metric (LifeSync/Wearable)."""
+    return jsonify({
+        'instances': _ping_vm_status() if not USE_MOCK else [],
+        'metrics'  : _ping_wearable_metrics() if not USE_MOCK else MOCKUP_WEARABLE_REALTIME,
+    })
+
+
+@app.route('/api/kinesis/status')
+@login_required
+def api_kinesis_status():
+    """P1 r23, P4 r15. Kinesis stream 단건 상태."""
+    return jsonify(_ping_kinesis() if not USE_MOCK else {})
+
+
+@app.route('/api/emr/status')
+@login_required
+def api_emr_status():
+    """P4 r13. EMR Cluster 목록 + 상태."""
+    return jsonify(_ping_emr() if not USE_MOCK else [])
+
+
+@app.route('/api/admin/applications')
+@login_required
+def api_admin_applications():
+    """
+    상품 신청 내역 조회 — customer_product_application 테이블.
+    Query params:
+      status   : RECEIVED / IN_REVIEW / APPROVED / REJECTED / CANCELED (선택)
+      gid      : 특정 global_id (선택)
+      limit    : default 50, max 200
+      offset   : default 0
+    """
+    if USE_MOCK:
+        return jsonify({'total': 0, 'rows': []})
+
+    status = request.args.get('status')
+    gid    = request.args.get('gid')
+    try:
+        limit  = min(int(request.args.get('limit', '50')), 200)
+        offset = max(int(request.args.get('offset', '0')), 0)
+    except ValueError:
+        return jsonify({'error': 'limit/offset must be int'}), 400
+
+    where, args = ['1=1'], []
+    if status:
+        where.append('a.status = %s');     args.append(status)
+    if gid:
+        where.append('a.global_id = %s'); args.append(gid)
+    where_sql = ' AND '.join(where)
+
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                f"SELECT COUNT(*) AS cnt FROM customer_product_application a WHERE {where_sql}",
+                tuple(args),
+            )
+            total = cur.fetchone()['cnt']
+
+            cur.execute(
+                "SELECT a.application_id, a.global_id, a.ls_user_id, "
+                "       a.product_code, p.product_name, "
+                "       c.company_name, cat.category_name, "
+                "       a.applicant_name, a.applicant_phone, a.applicant_email, "
+                "       a.apply_amount, a.contact_time, a.memo, "
+                "       a.agree_marketing, a.status, a.created_at, a.updated_at "
+                "FROM customer_product_application a "
+                "LEFT JOIN product_master  p   ON a.product_id  = p.product_id "
+                "LEFT JOIN company_master  c   ON p.company_id  = c.company_id "
+                "LEFT JOIN category_master cat ON p.category_id = cat.category_id "
+                f"WHERE {where_sql} "
+                "ORDER BY a.created_at DESC LIMIT %s OFFSET %s",
+                tuple(args) + (limit, offset),
+            )
+            rows = []
+            for r in cur.fetchall():
+                rows.append({**r,
+                    'created_at': str(r['created_at']) if r.get('created_at') else None,
+                    'updated_at': str(r['updated_at']) if r.get('updated_at') else None,
+                })
+    except Exception as e:
+        return jsonify({'error': f'조회 실패: {str(e)}'}), 500
+
+    return jsonify({'total': total, 'limit': limit, 'offset': offset, 'rows': rows})
 
 
 # ── 운영 모니터링 ─────────────────────────────────────
