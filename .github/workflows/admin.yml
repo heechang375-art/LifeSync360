@@ -48,7 +48,9 @@ jobs:
   mirror-to-codecommit:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    # 19-cicd-service-platform이 GitHub CodeStarSourceConnection으로 직접 source —
+    # CodeCommit mirror 불필요. 19 stack을 CodeCommit 기반으로 되돌리면 if 조건 복원.
+    if: false  # github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
         with:
