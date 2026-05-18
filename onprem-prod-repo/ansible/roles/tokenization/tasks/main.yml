@@ -37,7 +37,17 @@
       - boto3
       - pymysql
       - pydantic
+      - cryptography
     virtualenv: /opt/tokenization/venv
+
+- name: Deploy PII AES key env (pii-masked 엔드포인트 복호화용)
+  copy:
+    content: "TOKEN_AES_KEY_B64={{ token_aes_key_b64 }}\n"
+    dest: /opt/tokenization/.pii_key.env
+    owner: ansible
+    mode: '0640'
+  no_log: true
+  notify: Restart tokenization
 
 - name: Deploy systemd service file
   template:

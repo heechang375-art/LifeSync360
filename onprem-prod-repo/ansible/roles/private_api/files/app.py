@@ -335,6 +335,20 @@ def get_pii(global_id: str):
     }
 
 
+@app.get('/internal/pii-masked/{global_id}')
+def pii_masked_proxy(global_id: str):
+    """ls-token /pii-masked 프록시 — PII 복호화 키는 ls-token만 보유, 마스킹값만 전달."""
+    host, port = VM_HOSTS['ls-token']
+    url = f'http://{host}:{port}/pii-masked/{global_id}'
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raise HTTPException(status_code=e.code, detail='tokenization pii-masked 오류')
+    except (urllib.error.URLError, OSError):
+        raise HTTPException(status_code=502, detail='tokenization 서버 연결 실패')
+
+
 @app.get('/internal/auth/user/{ls_user_id}')
 def auth_get_user(ls_user_id: str):
     db = get_db()
