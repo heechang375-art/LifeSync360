@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS master_customer (
     vip_grade            VARCHAR(10)  NOT NULL DEFAULT 'NORMAL',
     customer_type        VARCHAR(20)  NOT NULL DEFAULT 'INDIVIDUAL',
     first_created_dt     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-    last_updated_dt      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    last_updated_dt      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_mc_status (customer_status)
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_dt           TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
     last_login_dt        TIMESTAMP    NULL,
     INDEX idx_global (global_id),
+    INDEX idx_users_status (user_status),
     CONSTRAINT fk_users_customer FOREIGN KEY (global_id) REFERENCES master_customer(global_id)
 );
 
