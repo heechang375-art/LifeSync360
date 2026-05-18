@@ -1367,3 +1367,472 @@ aws ssm get-parameter \
 | 732 계정 인프라 재배포 | ⏳ |
 | GitHub Secrets 732 키로 재발급 + mirror-to-codecommit 복원 | ⏳ |
 | admin Task Role 에 ping IAM 권한 추가 (rds/dynamodb/elasticache/ecs/elbv2/ec2/lambda/glue/events/cloudwatch Describe*) | ⏳ |
+
+---
+
+## 2026-05-17 — 시트 매핑 정합 / 동의·신청·추천 / admin V3 / ERD / 다크테마 / 354 환원
+
+### 작업 요약
+
+**1. 시트 매핑 정합 (`통합_매핑_시트분할.xlsx` 106행)**
+
+라운드 전 55% (58/106) → 라운드 후 **92%** (98/106).
+
+- Phase 0: 시트 자체 13셀 자동 수정 (openpyxl) — SQL 오류 6 / 모델 결정 3 / 가독성 2 / 보강 1
+- Phase 1: **Analytics Batch** 신규 (P3 r10/r12/r13)
+  - `lambda/analytics_aggregator/handler.py` (Aurora `customer_recommend_daily` mart INSERT + DDB BatchWrite `analytics_segment_performance`/`analytics_demographic_summary`)
+  - `Aws_iac/templates/23-analytics-batch.yaml` (DDB 2 + Lambda + Role + EventBridge cron DISABLED)
+  - bash 3종 (`deploy-analytics-batch.sh`, `create-recommend-daily-table.sh`, `invoke-analytics-aggregator.sh`)
+  - admin 라우트 3개: `/api/admin/recommend-trend`, `/segment-performance`, `/demographic-summary`
+- Phase 2: **온프레 lambda 9 action 추가** (P1 r3-5 / P2 r13-17,22 / P4 r38-43,60)
+  - `lambda/onprem_customer_query/handler.py` action 8 → 17
+  - `local_lab_status` (RFC api-health-check-06 호환), `count_master_customer/users/users_consented`, `get_master_customer/identity_map`, `vm_health/mysql_health/tokenization_health`
+- Phase 3: **Redis admin 실 호출 전환** (P2 r37, P4 r4) — `_get_redis()` + `r.zrevrange('rec:{global_id}', 0, 2, withscores=True)`
+- Phase 4: **GCP 4종 SDK 도입** (P3 r9,17,18,22 / P4 r32-36)
+  - `_get_bq()`, `_init_aip()`, `_get_mon()` lazy init (인증 실패 시 None)
+  - `_stub_gcp_status`/`_stub_vertex_metrics`/`_stub_feature_importance` 본체 교체 + `_stub_bigquery_analytics(kind)` 신규
+  - `requirements.txt`: `google-cloud-bigquery==3.27.0`, `aiplatform==1.71.1`, `monitoring==2.27.1`
+- Phase 5: **잔여 일괄 처리** — admin 헬퍼 5개 (`_ping_kinesis`/`_ping_wearable_metrics`/`_ping_emr`/`_ddb_score_distribution`/`_ddb_prob_distribution`) + `/api/*` 17개 라우트 + 21 yaml IAM 권한 5개
+
+**2. Platform 동의 / 신청 / 추천 로직 재설계**
+
+- Phase 1: **동의 페이지** — 단순 체크박스 → 8 계열사 카드 UI (icon/label/desc/scope), `CONSENTS` 8개 (BANK/CARD/INSURANCE/SECURITIES/ONLINE_INS/HEALTHCARE/HOSPITAL/WEARABLE)
+- Phase 2: **상품 신청 페이지 신규** — 클릭 alert → `/product/<code>/apply` 폼 페이지 + `POST /api/product/<code>/apply` (신청자 정보/상세/약관 + `customer_product_application` INSERT, application_id `APP-YYYYMMDDHHMMSS-{sub[-6]}`)
+- Phase 3: **추천 로직 통합 매칭** — DDB grade 단일 매칭 → Service-DB `recommend_rule` + `cross_sell_rule` + results.csv NBA(next_best_action) 통합
+  - NBA→action_code 매핑 13종 (RETENTION→RECOMMEND_HEALTH, INSURANCE_UPSELL→RECOMMEND_INSURANCE, PB/WM/INVEST/SAVING/CARD/LOAN/PENSION/WELLNESS/TELEMED ...)
+  - 응답 형식: `list` → `{meta: {grade,score,health,vip_prob,next_best_action}, products}`
+  - **계열사 분리 X, 단일 list 반환** (사용자 결정)
+  - history INSERT action_code 같이 기록 (NBA 매칭 / cross_sell / fallback)
+- Phase 4: **프론트 호환** — `index.html` Home/Recommend 탭 응답 처리 통째 교체, USE_MOCK 분기도 신규 형식 변환
+- Phase 5: **잔여 5건** — `seed-ddb-from-csv.sh` (results.csv → DDB BatchWriteItem) / `Service-DB/9.customer_product_application.sql` / admin `/api/admin/applications` / NBA 정렬 검증 / `VIP_PROB_THRESHOLD` env (default 0.5)
+
+**3. admin 설계서 V3 정합 + schema_reference 정합**
+
+- 설계서 V3.xlsx 기준 `/api/*` 23개 라우트 매핑 검증, 누락 추가: `/api/local/status` (P4 r60) + alias `/api/admin/local-lab-status`
+- helper stub 5종 추가 (`_stub_aurora_summary/_history/_activity/_recommend_stats/_ai_summary`) — DDB/Aurora 응답 없을 때 화면 깨짐 방지
+- admin `/ai` SQL 정정: `p.category` → `cat.category_code` (category_master JOIN 추가), CTR/CVR 분모에 `NULLIF` 적용
+
+**4. PPT 슬라이드 16 ERD 이미지 교체** (`아키텍처구성도_2조_V3.7_Lite.pptx`)
+
+- 텍스트 grep 0 hit → **이미지 안 텍스트** 였음 (`ppt/media/image65.png`)
+- `docs/preview/pptx_slide16_media/erd_new.html` 작성 (7 entities, schema_reference 정합: `pii_token` PK, `audit_id` PK, `customer_status`/`vip_grade`/`customer_type` enum, score 5개 분리)
+- Edge headless → PNG 캡처 → image65.png 교체, 산출 `아키텍처구성도_2조_V3.7_Lite_erd수정.pptx`
+- 원본 잠금 (PowerPoint 열림)으로 덮어쓰기 실패 → 새 파일명 저장
+
+**5. admin 다크/라이트 테마 토글**
+
+- `templates/base.html` (67 → 102줄): head FOUC 방지 inline script + body SSR cookie 기반 class + body 끝 toggle script (localStorage + cookie 동기화)
+- `static/css/admin.css` 98줄 추가: `.theme-toggle` + ☀️/🌙 아이콘 + `body.dark-theme` override 50건 (배경/사이드바/topbar/카드/inline style `[style*="color:#xxx"]` 매칭 `!important`/SVG 차트 흰 배경/입력 필드)
+
+**6. admin 화면 mockup + 데이터 정합 화면**
+
+- `docs/preview/admin_p1~p4.html` + `_dark.html` 8개 (P1 Executive Dashboard / P2 Customer 360 / P3 AI 추천 / P4 운영 모니터링)
+- 시안 zip 분석 (`docs/preview/대시보드UI샘플수정.zip`, `대시보드UI샘플-화이트.zip`)
+
+**7. 354 계정 환원 (732 → 354)**
+
+직전 라운드 732 전환 후 다시 354 작업 환경 복귀. 4 파일 18곳 일괄 치환 (`732264765472` → `354493396671`):
+
+| 파일 | 곳 |
+|---|---:|
+| `admin-platform/taskdef.json`, `lifesync360-platform/taskdef.json` | 6 + 6 |
+| `Aws_iac/.../params/cicd-service-platform.env`, `data.env` | 4 + 2 |
+
+### 상태
+
+| 항목 | 상태 |
+|------|------|
+| 시트 매핑 정합 92% | ✅ |
+| 동의·신청·추천 로직 (Service-DB + NBA) | ✅ |
+| analytics_aggregator lambda + DDB mart 2 + Aurora `customer_recommend_daily` | ✅ 코드 |
+| 온프레 lambda 17 action | ✅ |
+| Redis 실 호출 + GCP SDK 4종 | ✅ 코드 |
+| admin 설계서 V3 100% 정합 (23 + 신규 alias) | ✅ |
+| schema_reference 정합 (`/ai` SQL 등) | ✅ |
+| 다크/라이트 테마 토글 (admin) | ✅ |
+| PPT slide 16 ERD 이미지 교체 | ✅ |
+| 354 계정 환원 (4 파일 18곳) | ✅ |
+| 23 stack deploy + EventBridge ENABLE | ⏳ |
+| 온프레 PrivateAPI 신규 9 엔드포인트 구현 | ⏳ |
+| GCP Service Account / Workload Identity 셋업 | ⏳ |
+
+---
+
+## 2026-05-18 — Platform JWT 데코레이터 / api_recommendations 분리 / index·CSS 정리
+
+### 작업 요약
+
+**1. 스파게티 코드 진단 (platform 1075줄 / admin 1500줄)**
+
+- platform: 10 라우트에 JWT 인증 5줄 블록 중복 (50줄 중복), `api_recommendations` 235줄 단일 함수
+- admin: DDB client 인스턴스 매번 생성, helper stub_ prefix 일관성 X (P2~P3 다음 라운드 이월)
+
+**2. P0 — `@require_jwt` decorator (`lifesync360-platform/app.py:212~223`)**
+
+```python
+def require_jwt(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        auth  = request.headers.get('Authorization', '')
+        token = auth.removeprefix('Bearer ').strip()
+        try:
+            kwargs['payload'] = decode_jwt(token)
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'invalid token'}), 401
+        return f(*args, **kwargs)
+    return wrapper
+```
+
+- 10 라우트 적용 (api_me / api_consent / api_event / api_recommendations / api_upgrade_actions / api_my_applications / api_my_products / api_campaigns / api_dashboard / api_product_apply)
+- 8 라우트 자동 sed-like 치환 + 2 라우트 수동 정리 (api_me 외부 try-except 제거+outdent, api_dashboard try-except 통째 제거)
+- 결과: 50줄 중복 → 12줄 decorator + 10 라우트 / app.py 1075 → 1053줄
+
+**3. P1 — `api_recommendations` 235줄 → 5 helper 분리**
+
+| Helper | 라인 | 책임 |
+|---|---:|---|
+| `_NBA_TO_ACTION` (상수) | 17 | next_best_action → action_code 매핑 13개 |
+| `_recommendations_mock()` | 27 | USE_MOCK 응답 |
+| `_fetch_ddb_meta(global_id)` | 13 | DDB → (grade, score, health, vip_prob, nba) 5-tuple |
+| `_fetch_redis_cached_ids(global_id)` | 8 | Redis 캐시 hit 조회 |
+| `_match_rules(cur, grade, ...)` | 35 | recommend_rule + cross_sell_rule → (cat_list, rule_action_by_cat) |
+| `_fetch_products(cur, cached_ids, ...)` | 54 | 3 모드: cache hit / category 매칭 / fallback |
+| `_enrich_and_record(cur, products, ...)` | 32 | reason/rec_rank/score 부여 + history INSERT + 점수 재정렬 |
+
+- 본문: 235 → 55줄 (-76%), 응답 인터페이스 (`{meta:{...}, products:[...]}`) 동일 유지
+
+**4. Plan A — index.html / CSS 정리**
+
+| 파일 | 원본 | 정리 후 | 절감 |
+|---|---:|---:|---:|
+| `index.html` | 360 | 320 | -38 (SSR 추천 탭 + 정적 JS 핸들러 죽은 코드 제거) |
+| `app.py` dashboard route | 1053 | 1051 | -2 (`recommendations=recs, companies=COMPANIES` 미사용 인자 제거) |
+| `style.css` | 937 | 658 | **-279 (-30%)** (미사용 룰 71개 — `.home-rec-cat*`/`.history-*`/`.grade-card`/`.detail-list`/`.stab-*`/`.my-seg-*`/`.my-product-*`/`.spend-*`/`.upgrade-*`/`.indicator-pill`/`.company-*`/`.section-title` 등) |
+| `admin.css` | 265 | 234 | -31 (-12%) (미사용 룰 32개 — `.sidebar-section`/`.stat-*`/`.grade-dist*`/`.funnel-bar*`/`.view-rank-*`/`.search-bar`/`.pagination`/`.btn-ghost`/`.form-select`/`.two/three/four-col`) |
+
+- CSS 자동 정리 python script — 룰 블록 셀렉터 콤마 분리 → 클래스 모두 unused 면 룰 통째 삭제
+- **동적 prefix 강제 보호** (`grade-`, `rank-`, `sc-`, `status-`, `tab-`, `rec-`, `badge-`, `fill-`, `ladder-`, `view-rank-`) — JS 가 `grade-${grade}` 등으로 생성하는 클래스 보존
+
+**5. 화면 동작 검증 — Edge headless 11화면 캡처**
+
+- 환경: `/tmp/ls_venv` venv + `pip install -r requirements.txt` (platform/admin)
+- platform `:5000` / admin `:5001` BG (USE_MOCK=true)
+- 인증 우회: platform `static/_seed.html` (fetch register → setItem ls_token → redirect) / admin curl POST /login cookie → SSR HTML + `<base href>` 삽입 → file://
+- 다크모드 캡처 특이 케이스: `base.html` body 끝 script 가 file:// localStorage 빈 값 보고 `apply('light')` 호출 → 그 script 통째 제거 + admin.css inline embed 후 캡처 → 다크 정상 적용
+
+| # | 화면 | 결과 |
+|---|---|---|
+| 01~04 | platform/admin 로그인·회원가입·동의 | ✅ |
+| 05 | platform `/` 홈 | ✅ VIP + 점수 92.4 + 추천 6개 |
+| 06 | platform `/settings` | ✅ |
+| 07 | platform `/product/DEP-001` | ✅ |
+| 08 | admin `/dashboard` | ✅ KPI 10 + AWS/GCP + 가입률 |
+| 09 | admin `/users` | ✅ |
+| 10 | admin `/ai` | ✅ CTR/CVR/TOP10 |
+| 11 | admin **다크모드** | ✅ override 50건 정확 적용 |
+
+### 상태
+
+| 항목 | 상태 |
+|------|------|
+| P0 `@require_jwt` decorator + 10 라우트 | ✅ |
+| P1 `api_recommendations` 5 helper 분리 (235→55) | ✅ |
+| Plan A index/style.css/admin.css 정리 (-350줄) | ✅ |
+| Edge headless 11 화면 검증 | ✅ |
+| **P2** `db.commit/try-finally` → `with get_db()` 통일 | ⏳ |
+| **P3** admin DDB client 캐싱, helper stub_ prefix 일관성 | ⏳ |
+| **D-1** index.html `my-applications-list` SSR DOM JS 로직 채움 or 제거 판단 | ⏳ |
+| **D-2** index.html home 탭 헤더 중복 (정적 + 동적) 정리 여부 판단 | ⏳ |
+
+### 메모
+
+- 캡처 산출물: `C:\Users\campus3S026\AppData\Local\Temp\ls_caps\` (11 PNG + admin_cookie.txt + HTML 임시)
+- 임시 venv: `C:\Users\campus3S026\AppData\Local\Temp\ls_venv` (재사용 가능)
+- CSS 정리 사고 + 복구 절차 + Edge headless 캡처 트릭 → `local-test-troubleshooting.md` 별도 정리
+
+
+## 2026-05-18 ② — admin 화이트 샘플 4 페이지 / DB 정합 검증 / PrivateAPI 풍부화 / Service-DB v3 슬림화 / docs 명세
+
+### 작업 요약
+
+**1. admin UI 화이트 샘플 4 페이지 재구성** (`대시보드UI샘플-화이트.zip` 기준)
+
+- 사이드바 제거 + 상단 헤더(LifeSync 360 + 중앙 4탭 + 우측 admin) 구조로 `base.html` 전면 교체
+- **다크 토글/스크립트/cookie 처리 전부 제거** — 화이트 단일 톤 (사용자 결정)
+- `admin.css` 전면 교체 — 다크 오버라이드 235줄 들어내고 상단 탭/카드/도넛/토폴로지 스타일 추가
+- 신규 mockup 21 상수 (`mockup_data.py` `MOCKUP_DASH_*` / `MOCKUP_C360_*` / `MOCKUP_AI_*` / `MOCKUP_NET_*`)
+- 4 페이지 새 템플릿:
+  - **P1 dashboard.html** — 8 KPI(4×2) + Cloud 3카드(AWS/GCP/On-Prem) + S3 5카드 + 최근 업로드 테이블
+  - **P2 users.html** — 검색 + 프로필 헤더(VIP 배지·종합/건강 점수) + 좌3박스(가입·동의보유·Top-N) + 우3박스(AI NBA·정밀점수·추천활동·행동로그)
+  - **P3 ai.html** — 4 KPI + 7일 추이 SVG 차트+TOP10 + 도넛(카테고리)·연령 막대·등급 분포 + BigQuery 3박스 + DDB 히스토그램/Precision-Recall
+  - **P4 ops.html** — 토폴로지(AWS 3 VPC + GCP + On-Prem) + AWS Platform/Data/GroupVM 3카드 + Connectivity/GCP/On-Prem 3카드 + Wearable 5KPI + API 엔드포인트
+- **렌더링 중 발견 → 즉시 수정**: `insight.items`/`c.items`/`topology.*.items` → Jinja dict `.items()` 메서드 충돌 → mockup 키 `rows`/`lines` 로 rename + 템플릿 동시 수정
+- Edge headless 1280×1800 4 페이지 캡처 — 모두 정상 렌더링 확인
+
+**2. DB / 리소스 호출 ↔ 스키마 정합 검증** (`Aurora_Schema_Reference.md` + `schema_reference.md` + `results.csv`)
+
+- admin/platform 의 모든 SQL/DDB/Lambda/Redis 호출 추출 → 3 스키마와 1:1 대조
+- SDK 사용법 공식문서 검증 (pymysql DictCursor + with / boto3 resource·conditions.Key / redis-py setex·decode_responses / pyjwt 2.0+ algorithms / google-cloud-bigquery·monitoring_v3 / cloudwatch get_metric_statistics) — deprecated/오용 0건
+- **P0 (DDL 누락)** — `customer_recommend_daily`, `analytics_segment_performance`, `analytics_demographic_summary` → `docs/today-tables-2026-05-17/` 폴더에 이미 정의 발견 (`23-analytics-batch.yaml` + `create-recommend-daily-table.sh` + GUIDE)
+- **P0 신규** — `_fetch_onprem_profile_map` 의 `action='list_profile_all'` 호출 분기가 Lambda handler 17 action 어디에도 없음 → 페이지네이션 필요
+
+**3. PrivateAPI 풍부화 — 3단계**
+
+| # | 단계 | 영향 |
+|---|---|---|
+| ① | `GET /internal/profile/list-all?page=N&size=10000` 신설 + Lambda `list_profile_page` action 추가 + `analytics_aggregator._fetch_onprem_profile_map` 페이지 루프 + 메모이즈 (`_profile_cache` 모듈 전역, [2]/[3] 두 단계 재호출 시 1회만 fetch) | Lambda sync invoke 6MB 제한 우회. 1M → 10K × 100회 |
+| ② | DBUtils `PooledDB` 도입 — `mincached=2 / maxconnections=10 / ping=1 / charset=utf8mb4 / autocommit=False`. `get_db()` 인터페이스 동일 (다른 코드 0줄 변경). ansible role pip 의존성 `DBUtils` 추가 | `pymysql.connect()` 8~25ms → pool 재사용 0.5ms (handler 시간 50~60% 단축) |
+| ③ | A 옵션 9 신규 엔드포인트 (count 3 + 단건 2 + health 4 + 종합 1) — Lambda handler 17 action 이 모두 PrivateAPI 본체에 1:1 매핑됨. socket TCP / urllib HTTP 헬퍼 (`_tcp_check`, `_http_check`, `_now_iso`). VM 매핑 env override 가능 | admin 통합 KPI/ops 화면이 빈 값 → 실데이터 표시 |
+
+**4. admin app.py 죽은 코드 정리** (A 옵션 일관성)
+
+- `_get_identities` 함수 + `PRIVATE_API_URL` env 변수 + `import requests` 통째 제거
+- 호출처 → `_call_onprem('get_identity_map', global_id=gid)` 로 교체 (Lambda 경유)
+- `requirements.txt` 에서 `requests==2.31.0` 제거
+- → admin → 온프레 통신 경로 **100% Lambda 경유로 통일** (ECS subnet에 VPN route 추가 불필요)
+
+**5. platform 인라인 DDL 제거 + Service-DB v2 → v3 정합화**
+
+| 변경 | v1 | v2 | **v3 (현행)** |
+|---|---|---|---|
+| `customer_product_application` 컬럼 수 | 17 (인라인 DDL) | 16 (product_code 제거) | **9** (applicant_*/apply_amount/contact_time/memo/agree_marketing 7 제거) |
+| `status` 타입 | VARCHAR(20) | VARCHAR(20) | **ENUM** 5값 |
+| `global_id` 타입 | VARCHAR(20) | **VARCHAR(50)** (history/log 통일) | (동일) |
+
+- `Service-DB/` 폴더 v3 zip 동기화 (9.sql + 10.sql + Aurora_Create + execution + CHANGELOG + NEW_TABLES_GUIDE)
+- platform `api_product_apply` INSERT 11컬럼 → **4컬럼** (`application_id, global_id, ls_user_id, product_id`), applicant 가져오는 14줄 블록 통째 제거, `data = request.get_json()` 도 제거
+- admin `/api/admin/applications` SELECT 17컬럼 → **12컬럼** (제거 7 + reviewer_id/reviewed_at 추가)
+- platform `/api/my-applications` SELECT 의 `a.product_code` → `p.product_code` (product_master JOIN 컬럼)
+
+**6. `apply.html` 폼 단순화** (B 옵션)
+
+- 마케팅 동의 체크박스(`row-mkt`) 행 + `cbMkt` JS 변수 + `payload.agree_marketing` 필드 모두 제거
+- 약관 필수 2개(약관/개인정보 제3자) + "모두 동의" 통합 토글만 유지
+
+**7. NEW_TABLES_GUIDE.md CVR 정의 사용자 정의로 수정** — 2 파일 (`ls/` + `Service-DB/`)
+
+- CTR = `clicked / recommended` (노출 대비 클릭)
+- **CVR = `purchased / clicked`** (클릭한 건 중 구매로 이어진 비율) — 사용자 정의, 마케팅 표준
+- sample SQL 3 곳 모두 `NULLIF(SUM(clicked_flag='Y'), 0)` 패턴으로 갱신
+
+**8. 화면 동작 검증 (USE_MOCK=true)**
+
+- platform `:5000` + admin `:5001` BG 실행
+- JWT 발급 → `apply.html` 받아서 `localStorage.setItem('ls_token', ...)` inline 주입 → Edge headless 560×1200 캡처 → 마케팅 행 제거 확인
+- `POST /api/product/DEP-001/apply` mock 응답 `{application_id, status:'ok'}` 정상
+- `GET /api/my-applications` 3건 mock 정상
+- admin 4 페이지 회귀 (HTTP 200 × 4, 사이즈 동일 — `/api/admin/applications` SELECT 변경 무영향)
+
+**9. 신청 시 Aurora 적재 흐름 점검** (운영 USE_MOCK=false 기준)
+
+`POST /api/product/<code>/apply` 한 트랜잭션 안에서 3 테이블 적재:
+
+| 단계 | 테이블 | 동작 |
+|---|---|---|
+| ① | `customer_product_application` | INSERT 4컬럼 (status default `RECEIVED`, created/updated 자동) |
+| ② | `customer_recommend_history` | `purchased_flag='Y'` UPDATE (해당 추천 1건, 있을 때만) |
+| ③ | `customer_dashboard_log` | INSERT (`page_type='DETAIL'`, `product_click='Y'`, `session_id=application_id`) |
+
+- pymysql `autocommit=False` → 명시적 `db.commit()` 호출 시에만 영구화
+- 예외 시 finally `db.close()` → 자동 rollback → 3 테이블 모두 미반영 (원자성 보장)
+
+**10. 354계정 IaC 적용 점검**
+
+| 결과 | 상태 |
+|---|---|
+| ECS Docker build + task 부팅 | ✅ 정상 (requirements 호환, app.py import OK) |
+| ALB Health check `/` | ⚪ 변경 영향 없음 (이전 동작 그대로) |
+| 21 stack IAM (analytics DDB + Kinesis + EMR + lifesync-onprem-customer-query) | ✅ 권한 반영됨 |
+| `customer-profile-sync` invoke 권한 | ❌ 21 stack 미정의 — platform `_resolve_global_id` 가 죽은 코드라 즉시 영향 0 |
+| **5개 종속 작업** (다음 표) | ⏳ 너 환경에서 실행 |
+
+**11. ls-vpngw 제거 + lc-* → ls-* 표기 정정 + PrivateAPI 명세 파일 신설**
+
+- PrivateAPI `app.py` `VM_HOSTS` dict 에서 `ls-vpngw` 행 제거 (테스트용 미사용)
+- Lambda handler docstring `vm_id in (ls-db, ls-token, ls-api)` 로 갱신
+- admin `mockup_data.py` 3 곳 정정 — `MOCKUP_LOCAL_LAB` 의 ls-vpngw 행 제거, `MOCKUP_DASH_CLOUD3` 의 `lc-db · lc-tokenz · lc-api` → `ls-db · ls-token · ls-api`, `MOCKUP_NET_TOPOLOGY.onprem` lines 동일 정정
+- **`docs/private-api.md` 신규 (362줄)** — 9 섹션: 전체 21 라우트 / 신규 10 상세 (SQL/응답/용도) / 헬퍼 / 환경변수 / Lambda action ↔ endpoint 매핑 / pip 의존성 / 재배포 절차 + 검증 curl / 인증·보안 검토 / 변경이력
+- 코드 잔재 grep 0건 (`ls-vpngw|lc-api|lc-db|lc-tokenz`)
+- 과거 기록 문서(`local-test-troubleshooting.md`, `pii-encryption-guide.md` 등)는 history 보존을 위해 미정정
+
+### 상태
+
+| 항목 | 상태 |
+|---|---|
+| admin 화이트 샘플 4 페이지 재구성 | ✅ |
+| 다크 토글 제거 + 화이트 단일 | ✅ |
+| DB/리소스 호출 ↔ 스키마 정합 리포트 | ✅ |
+| PrivateAPI `/internal/profile/list-all` + analytics_aggregator 페이지 루프 | ✅ |
+| PrivateAPI DBUtils PooledDB | ✅ |
+| PrivateAPI A옵션 9 엔드포인트 (count/단건/health) | ✅ |
+| admin `_get_identities`/`PRIVATE_API_URL`/requests 제거 | ✅ |
+| platform 인라인 DDL 제거 + INSERT 4컬럼화 | ✅ |
+| Service-DB v3 동기화 (16→9 슬림) + admin SELECT 슬림화 + apply.html 폼 단순화 | ✅ |
+| NEW_TABLES_GUIDE CVR 정의 수정 (2 파일) | ✅ |
+| 화면 동작 검증 (apply 캡처 + mock 응답 + admin 4 페이지) | ✅ |
+| 신청 흐름 Aurora 적재 명세 | ✅ |
+| ls-vpngw 제거 + lc→ls 정정 + `docs/private-api.md` 명세 | ✅ |
+| **Aurora 마이그레이션** (`bash Service-DB/service-db-execution.sh`) | ⏳ |
+| **PrivateAPI 재배포** (DBUtils + 10 신규 엔드포인트) | ⏳ |
+| **Lambda 재배포** (onprem_customer_query 18 action) | ⏳ |
+| **23 stack 배포** (analytics_aggregator + DDB 2 + EventBridge DISABLED) | ⏳ |
+| **platform `taskdef.json` REDIS_HOST env 추가** | ⏳ (ElastiCache endpoint 확정 필요) |
+| **ECS 재배포** (admin/platform image build + service deploy) | ⏳ (CodePipeline) |
+| **EventBridge cron ENABLE** (검증 후) | ⏳ |
+
+### 메모
+
+- **신규 명세 파일**: `docs/private-api.md` (21 라우트 + 환경변수 + 의존성 + 재배포 절차)
+- **CVR 정의** (확정): `purchased / NULLIF(SUM(clicked_flag='Y'), 0) × 100` — 클릭한 건 중 구매로 이어진 비율
+- **VM 3종** (`ls-db` / `ls-token` / `ls-api`), `ls-vpngw` 테스트용 제외
+- `analytics_aggregator` 는 페이지 루프 (size=10000, max 200 페이지 안전 상한) + 메모이즈 — 1M profile fetch Lambda 6MB 제한 안전
+- A 옵션 (Lambda 경유) 일관성으로 ECS subnet 에 VPN route 추가 불필요 — B (직접 HTTP) 전환은 운영 안정화 후 별도 검토
+- platform `_resolve_global_id` (`PROFILE_SYNC_LAMBDA` 호출) 는 현재 호출처 없음 (죽은 코드) — register 흐름 부활 시 21 stack IAM 권한 추가 필요
+
+
+## 2026-05-18 ③ — 설계서 V4/V5 정합화 / DDB 이름 통일 / P1~P4 화면 명세 / API 응답 통일 / S3 동의 스냅샷 / admin Private EC2 결정
+
+### 작업 요약
+
+**1. DDB 분석 테이블명 설계서 정합 — `analytics_*_daily` 로 통일**
+
+| 출처 | 이전 | 이후 |
+|---|---|---|
+| 23-analytics-batch.yaml | `analytics_segment_performance` / `analytics_demographic_summary` | `analytics_segment_daily` / `analytics_demographic_daily` |
+| 21-lifesync-ecs IAM Resource ARN | 동일 | 동일 |
+| admin taskdef env + admin app.py + analytics_aggregator handler + docs/today-tables GUIDE.md | 동일 | 동일 |
+
+- 6 파일 sed 일괄 치환 + ast/JSON 검증 (잔재 0건, 새 이름 29건 매칭)
+- 설계서 V4 P3 row 12-13 명시 (`analytics_segment_daily` / `analytics_demographic_daily`) 기준
+
+**2. P1~P4 화면 명세 정합 (V5 4 페이지 vs 코드 4건 불일치 해소)**
+
+| 페이지 | 작업 |
+|---|---|
+| **P1 KPI 8 → 9** | `MOCKUP_DASH_KPI8` → `MOCKUP_DASH_KPI` (Redis Cache 수 신규 추가, `54,820 keys` / `DBSIZE · 최대 60,000`). `grid-4` → `grid-3` (9 카드 3×3). 설계서 V5 순서 정합 (Row1 고객 / Row2 추천누적+Cache / Row3 CTR/CVR/AI상태) |
+| **P2 정밀 → 정적 점수** | 라벨 "정밀 점수 (등급 가중)" → "정적 점수 (On-Prem customer_360_profile · 룰 기반)". 행동 82 → **금융 78** 교체 (설계서 V5 finance_score 정합). 자산 75 / 위험 12 유지 |
+| **P4 Wearable 5 → 6** | `MOCKUP_NET_WEARABLE_5KPI` → `MOCKUP_NET_WEARABLE`. **이상 이벤트 (Alert)** 카드 신규 추가 (🚨 / `2` / `24h Alert · SNS`). `grid-5` → `grid-6` + `.grid-6` CSS 추가 |
+| **P2 교차판매 UI 신규** | 좌측 컬럼 4 카드 → 5 카드 (가입상태 / 동의보유 / TopN / **교차판매** / 추가). `MOCKUP_CROSSSELL_LIST` 5건 (cross_sell_rule + product_master JOIN 정합) |
+
+**3. 표기 정정 — `ls-vpngw` 제거 + `lc-*` → `ls-*` (코드 + mockup)**
+
+- PrivateAPI `VM_HOSTS` dict 에서 ls-vpngw 행 제거 (테스트용 미사용) → 3 VM (`ls-db`/`ls-token`/`ls-api`)
+- Lambda handler docstring `vm_id in (ls-db, ls-token, ls-api)` 로 갱신
+- admin `mockup_data.py` 3 곳 정정 (MOCKUP_LOCAL_LAB, MOCKUP_DASH_CLOUD3, MOCKUP_NET_TOPOLOGY)
+- 코드 잔재 grep 0건. 과거 기록 문서는 history 보존
+
+**4. PrivateAPI 명세 파일 신설 — `docs/private-api.md` (362줄)**
+
+- 21 라우트 전체 (기존 11 + 신규 10) 명세 + SQL/응답/용도 + 헬퍼 + 환경변수 + Lambda action 매핑 + pip 의존성 + 재배포 절차 + 보안 검토
+
+**5. Admin API 명세 파일 신설 — `docs/admin-api.md` (640줄)**
+
+- 설계서 V4 16 API + admin 내부 7 API = **23 API 정합 매트릭스**
+- 각 API 응답 JSON 폼 + 화면 표시 위치 + UI 매핑
+- 시연 vs 운영 응답 스키마 차이 식별 (3건)
+- 화면 데이터 흐름 3 패턴 (SSR / AJAX / 하이브리드)
+- 운영 전환 체크리스트 8건
+
+**6. Admin Data Flow 파일 신설 — `docs/admin-data-flow.md` (391줄)**
+
+- 7 저장소별 Write 흐름 (Aurora/On-Prem/DDB/Redis/S3/BigQuery/GCS)
+- 23 API ↔ Read source ↔ Write 적재 흐름 매핑
+- 적재 주체 (배치/실시간/사용자/외부) + 빈도
+- 결정 사항 6건 / TODO 7건 / 응답 스키마 불일치 3건
+- 운영 정합 체크리스트 (5 영역, 18 항목)
+
+**7. 응답 스키마 통일 (시연 ↔ 운영 동일 구조)**
+
+| API | 변경 |
+|---|---|
+| `/api/dashboard/summary` | `_stub_aurora_summary()` 재작성 — 운영도 9 카드 list 반환 (baseline MOCKUP_DASH_KPI + 실 호출 결과로 value 덮어쓰기, 부분 실패 mockup fallback). 호출 6개: `count_master_customer` / `count_users` / `count_users_consented` / Aurora COUNT 2 / CTR-CVR / DDB scan |
+| `/api/s3/status` | 신규 `_s3_status_cards()` 헬퍼 — `_ping_s3_ingestion()` dict → 5 카드 list 매핑 (`MOCKUP_DASH_S3_5` baseline) |
+| `/api/customer/profile/{gid}` | 신규 `_profile_full_mock()` 헬퍼 — `MOCK_USERS / MOCK_SCORES / MOCK_CONSENTS / MOCK_IDENTITIES` 를 PrivateAPI `get_all` 구조로 재구성. 라우트: 운영 분기를 `get_profile` + `_load_consent_from_s3` 합성으로 변경 |
+
+- USE_MOCK=true 실호출 검증 — 3 API 모두 동일 응답 형태 ✅
+
+**8. S3 동의 스냅샷 일배치 흐름 신설 (Q1=A S3 / Q2=A 일배치)** ⭐
+
+설계서 V4 row 21-22 정합 — admin → 온프레 동의 직접 호출 0건 으로 전환.
+
+| 구성요소 | 신규/변경 |
+|---|---|
+| PrivateAPI `/internal/consent/list-all?page=N&size=10000` | **신규** — user 페이지 단위, `JSON_ARRAYAGG(JSON_OBJECT(...))` 로 user 당 consents 8 도메인 묶음 |
+| Lambda `onprem_customer_query` `list_consent_page` action | **신규** (action 18 → 19개) |
+| Lambda `consent_snapshot_aggregator/handler.py` | **신규** — page 루프 (max 200 페이지 = 2M 안전 상한) + ThreadPoolExecutor PutObject 100 동시 + S3 `lifesync-raw/consent/dt=YYYY-MM-DD/{global_id}.json` |
+| CFN `Aws_iac/Aws_iac/templates/25-consent-snapshot.yaml` | **신규** — Lambda + IAM Role (lambda:Invoke + s3:PutObject) + LogGroup + EventBridge cron `cron(0 18 * * ? *)` = **KST 03:00** (초기 DISABLED) |
+| admin `_load_consent_from_s3()` 헬퍼 + 호출처 교체 | S3 `lifesync-raw/consent/dt=오늘/{gid}.json` GetObject + 어제 fallback. `user_detail` 라우트 + `api_customer_profile` 라우트 2 곳 교체 (`_call_onprem('get_consent'/'get_all')` 제거) |
+
+**9. 설계서 V4 ↔ admin 23 API 정합 검증**
+
+- V4 16 API 모두 admin 라우트 1:1 매핑 ✅
+- admin 내부 보너스 7 API (`/api/admin/recommend-trend`, `/api/admin/segment-performance`, `/api/admin/demographic-summary`, `/api/admin/applications`, `/api/admin/local-lab-status` alias, `/api/kinesis/status`, `/api/emr/status`)
+- 설계서 V4 P3 row 9 Feature 분포 출처 — Vertex AI/GCS vs 코드 BigQuery 불일치 (결정 미확정)
+- 설계서 V4 P2 row 41 `applied_at` → v3 실제 컬럼 `created_at` (설계서 오기, 코드 정합)
+
+**10. 354계정 IaC 적용 점검**
+
+- ECS Docker build + task 부팅 OK (requirements 호환)
+- ALB Health check `/` 변경 영향 없음
+- 21 stack IAM: analytics DDB / Kinesis / EMR / lifesync-onprem-customer-query 권한 반영됨
+- `customer-profile-sync` invoke 권한 미정의 (platform `_resolve_global_id` 죽은 코드라 즉시 영향 0)
+- 런타임 5개 종속 작업 필요 (Aurora 마이그 / PrivateAPI 재배포 / Lambda 재배포 / 23 stack / REDIS_HOST env)
+
+**11. P2 온프레 데이터 보안 점검 (외부 공유 시)**
+
+| 등급 | 항목 | 처리 |
+|---|---|---|
+| 🟢 안전 (외부 공유 OK) | 그룹사 등록일 / 플랫폼 가입일 / 최근 로그인 / 회원상태 / 고객상태 | 5건 |
+| 🟡 회색지대 | 인구통계 5축 / 동의 8 도메인 / 보유 계열사 / AI 등급 / AI 종합·건강 점수 / NBA | 시연 mockup 만 ✅, 실데이터 신중 |
+| 🔴 위험 | 이름 / 연락처 / 이메일 / 주소 / 주민번호 / 금융·자산·위험 점수 / 실 global_id | 마스킹 / 권한 분리 / 외부 공유 금지 |
+
+- PrivateAPI `/internal/pii/{global_id}` 응답 평문 5필드 (RRN 포함) — admin 운영자도 평문 보면 보안 사고 가능 → 마스킹 위치 결정 필요 (옵션 A: PrivateAPI 단 마스킹 / B: admin 단 / C: 평문 유지 — 사용자 결정 대기)
+- 외부 공유 안전 영역은 **가입/상태 정보 박스 5건만**
+
+**12. Admin 운영 인스턴스 결정 — Private Subnet EC2 1대 (ECS 공개 admin X)**
+
+- ECS Fargate + ALB 공개 admin 폐기 결정
+- Private Subnet EC2 단일 운영, VPN/SSM Session Manager 접근
+- 같은 admin 이미지 그대로 (ADMIN_LEVEL env 분기 불필요)
+- platform `/settings/consent` 보강 — 사용자 본인 동의 상태 표시 + 갱신 (후속 라운드)
+- 인프라 변경 영역: 21 stack admin ECS 폐기, 24 stack EC2 신설, CI/CD admin pipeline 변경 (ECR push + SSM run-command)
+- 인프라 작업은 별도 라운드 — 이번 라운드는 코드/문서/API 정합만
+
+### 상태
+
+| 항목 | 상태 |
+|---|---|
+| DDB 테이블명 설계서 정합 (`analytics_*_daily`) 6 파일 | ✅ |
+| P1 KPI 8 → 9 (Redis Cache 수) | ✅ |
+| P2 정밀 → 정적 점수 (행동 → 금융 + 출처 명시) | ✅ |
+| P4 Wearable 5 → 6 (이상 이벤트) | ✅ |
+| P2 교차판매 추천 UI 신규 | ✅ |
+| ls-vpngw 제거 + lc-* → ls-* 정정 | ✅ |
+| `docs/private-api.md` 신설 (362줄) | ✅ |
+| `docs/admin-api.md` 신설 (640줄) | ✅ |
+| `docs/admin-data-flow.md` 신설 (391줄) | ✅ |
+| 응답 스키마 통일 (3 API 시연↔운영) | ✅ |
+| S3 동의 스냅샷 일배치 — PrivateAPI / Lambda action / consent_snapshot_aggregator / 25 stack / admin S3 헬퍼 | ✅ (코드/IaC 완료, 배포 대기) |
+| 설계서 V4 ↔ admin 23 API 정합 검증 | ✅ |
+| 354계정 IaC 적용 점검 리포트 | ✅ (분석) |
+| P2 온프레 데이터 보안 등급 식별 | ✅ (분석) |
+| Admin 인스턴스 = Private EC2 1대 결정 | ✅ |
+| **Aurora 마이그레이션 v3** (Service-DB execution) | ⏳ |
+| **23/25 stack 배포** | ⏳ |
+| **PrivateAPI 재배포** (22 endpoints + DBUtils) | ⏳ |
+| **Lambda 재배포** (onprem 19 actions + consent_snapshot 신규) | ⏳ |
+| **24 stack EC2 신설** (admin Private) | ⏳ |
+| **21 stack admin ECS 폐기** + CI/CD 변경 | ⏳ |
+| **platform `/settings/consent`** 사용자 본인 동의 화면 보강 | ⏳ |
+| **PrivateAPI `/internal/pii` 마스킹 + RRN 별도 권한** | ⏳ (결정 대기) |
+| EventBridge cron ENABLE (23 + 25 두 stack) | ⏳ (검증 후) |
+
+### 메모
+
+- **신규 문서 3종**: `docs/private-api.md` / `docs/admin-api.md` / `docs/admin-data-flow.md` — 23 API + 21 PrivateAPI 라우트 명세 + 데이터 흐름
+- **신규 Lambda 1종 + CFN 1종**: `lambda/consent_snapshot_aggregator/` + `Aws_iac/Aws_iac/templates/25-consent-snapshot.yaml`
+- **PrivateAPI 라우트 21 → 22개**: `/internal/consent/list-all` 신규
+- **Lambda `onprem_customer_query` action 18 → 19개**: `list_consent_page` 신규
+- **응답 스키마 통일 효과**: 시연 검증된 화면이 USE_MOCK=false 운영 전환 후에도 동일 작동
+- **count_users_consented 정의**: 사용자 결정 **B 유지** (consent JOIN). `users.consent_completed` 컬럼은 운영에서 sync 코드 없어 default 'N' 고정 — 설계서 SQL 옵션 A 는 무용지물 상태
+- **admin 운영 환경**: Private Subnet EC2 단일, ECS 공개 admin 폐기 결정 — 인프라 변경 다음 라운드

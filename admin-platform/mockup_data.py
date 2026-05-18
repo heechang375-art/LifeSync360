@@ -194,7 +194,6 @@ MOCKUP_WEARABLE_REALTIME = [
 # ── 운영 모니터링 — Local Lab (VirtualBox / Docker) ───────
 # 아키텍처 V3.7 Lite 기준 K8s 없음. VirtualBox 4 + Docker 만 노출.
 MOCKUP_LOCAL_LAB = [
-    {'env': 'VirtualBox · ls-vpngw',  'state': 'Running', 'note': 'strongSwan VPN · 192.168.56.10'},
     {'env': 'VirtualBox · ls-db',     'state': 'Running', 'note': 'MySQL 8.0 · 192.168.56.11'},
     {'env': 'VirtualBox · ls-token',  'state': 'Running', 'note': 'Tokenization · 192.168.56.12'},
     {'env': 'VirtualBox · ls-api',    'state': 'Running', 'note': 'Private API + cron · 192.168.56.13'},
@@ -365,4 +364,289 @@ MOCKUP_BACKEND_SERVICES = [
     {'service': '회원가입 / 고객정보 조회', 'state': 'UP', 'note': 'PrivateAPI /internal/auth, /internal/customer'},
     {'service': '동의고객 데이터 적재',     'state': 'UP', 'note': 'consent_filter Lambda · 일배치'},
     {'service': 'Ansible 자동화',           'state': 'UP', 'note': 'Control Node · last run 03:00'},
+]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 화이트 샘플 UI (대시보드UI샘플-화이트.zip) 전용 데이터
+# 상단 탭(전체현황 / Customer 360 / AI 추천 / Network) 4페이지
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── P1 전체현황 — 9 KPI (3×3) — 설계서 V5 순서 ────────────
+# Row 1 (고객): 통합/가입/분석대상  Row 2 (추천 누적): 이력/로그/Cache  Row 3 (실시간 지표): CTR/CVR/AI상태
+MOCKUP_DASH_KPI = [
+    # Row 1: 고객 (1M / 300K / 60K)
+    {'label': '통합 고객 수',         'value': '1,000,000',   'sub': '전체 100% · On-Prem master_customer',     'accent': '#3b82f6', 'is_status': False},
+    {'label': '플랫폼 가입자',        'value': '300,000',     'sub': '전체의 30% · On-Prem users',              'accent': '#f59e0b', 'is_status': False},
+    {'label': '분석 대상 고객',       'value': '60,000',      'sub': '가입자의 20% · 동의 완료',                'accent': '#14b8a6', 'is_status': False},
+    # Row 2: 추천 누적 (이력/로그/Cache)
+    {'label': '누적 추천 이력',       'value': '487,290',     'sub': 'Aurora customer_recommend_history',       'accent': '#1e293b', 'is_status': False},
+    {'label': '누적 활동 로그',       'value': '12.8M',       'sub': 'Aurora customer_dashboard_log',           'accent': '#f59e0b', 'is_status': False},
+    {'label': 'Redis 추천 Cache 수',  'value': '54,820 keys', 'sub': 'DBSIZE · 최대 60,000 키 · rec:{global_id}', 'accent': '#8b5cf6', 'is_status': False},
+    # Row 3: 실시간 지표 (CTR/CVR/AI상태)
+    {'label': '추천 CTR (클릭률)',    'value': '14.2%',       'sub': 'SUM(clicked) / COUNT(*) · 실시간',        'accent': '#16a34a', 'is_status': False},
+    {'label': '구매 전환율 (CVR)',    'value': '9.8%',        'sub': 'SUM(purchased) / SUM(clicked) · 실시간',  'accent': '#3b82f6', 'is_status': False},
+    {'label': 'AI 추천 상태',         'value': 'Vertex AI',   'sub': 'DynamoDB · 오늘 04:30 갱신',              'accent': '#16a34a', 'is_status': True},
+]
+
+# ── P1 — Cloud 3카드 (AWS / GCP / On-Prem) ────────────────
+MOCKUP_DASH_CLOUD3 = [
+    {'badge': 'AWS', 'badge_bg': '#fef3c7', 'badge_color': '#d97706', 'title': 'AWS 클라우드', 'state': '8 / 8 정상', 'sub': 'Platform / Data / Group VM 3개 VPC'},
+    {'badge': 'GCP', 'badge_bg': '#dbeafe', 'badge_color': '#2563eb', 'title': 'GCP 클라우드', 'state': '3 / 3 정상', 'sub': 'BigQuery · Vertex AI · Cloud Run'},
+    {'badge': 'ON',  'badge_bg': '#ccfbf1', 'badge_color': '#0f766e', 'title': 'On-Premises', 'state': '3 / 3 정상', 'sub': 'ls-db · ls-token · ls-api'},
+]
+
+# ── P1 — S3 5카드 ────────────────────────────────────────
+MOCKUP_DASH_S3_5 = [
+    {'icon': '📁', 'label': 'Raw Bucket 총 파일', 'value': '847,392', 'note': "Mappers · Raw 누적"},
+    {'icon': '📊', 'label': '금일 적재 건수',     'value': '2,847',   'note': 'dt=2026-05-17'},
+    {'icon': '⚡', 'label': '페이로드 데이터',    'value': '38,124',  'note': 'Kinesis · 실시간'},
+    {'icon': '💾', 'label': '그룹사 적재량',      'value': '12.4 GB', 'note': 'CSV · JSON'},
+    {'icon': '⏱', 'label': '최근 업로드',        'value': '2분 전',  'note': 'BANK-CUST-001.csv'},
+]
+
+# ── P1 — 최근 업로드 파일 (S3 EventBridge) 테이블 ───────────
+MOCKUP_DASH_RECENT_UPLOADS = [
+    {'time': '14:23:08', 'file': 'BANK-CUST-001-20260517.csv',   'badge': 'BANK', 'badge_bg': '#dbeafe', 'badge_color': '#2563eb', 'size': '12.4 MB'},
+    {'time': '14:18:42', 'file': 'CARD-TXN-002-20260517.json',   'badge': 'CARD', 'badge_bg': '#fef3c7', 'badge_color': '#d97706', 'size': '8.7 MB'},
+    {'time': '14:15:11', 'file': 'INS-POLICY-001-20260517.csv',  'badge': 'INS',  'badge_bg': '#ccfbf1', 'badge_color': '#0f766e', 'size': '4.2 MB'},
+    {'time': '14:10:55', 'file': 'HLT-CHECKUP-001-20260517.json','badge': 'HLT',  'badge_bg': '#e0e7ff', 'badge_color': '#4f46e5', 'size': '3.1 MB'},
+]
+
+
+# ── P2 Customer 360 — 화이트 샘플 단일 프로필 데모 ──────────
+MOCKUP_C360_DEFAULT_QUERY = 'C000297409'
+
+MOCKUP_C360_PROFILE = {
+    'global_id':       'C000297409',
+    'name_masked':     '김*수',
+    'phone_masked':    '010-****-1234',
+    'gender':          '여',
+    'age_band':        '40대',
+    'region':          '서울',
+    'income':          'HIGH',
+    'asset':           'HIGH',
+    'grade':           'VIP',
+    'ai_total_score':  85.4,
+    'ai_health_score': 72.3,
+}
+
+MOCKUP_C360_STATUS = [
+    {'label': '그룹사 등록일',  'value': '2023-01-15',  'sub': '(3년 4개월차)', 'is_state': False},
+    {'label': '플랫폼 가입일',  'value': '2025-11-02',  'sub': '(6개월차)',     'is_state': False},
+    {'label': '최근 로그인',    'value': '2026-05-15',  'sub': '(2일 전)',      'is_state': False},
+    {'label': '회원 상태',      'value': 'ACTIVE',      'sub': '',              'is_state': True},
+    {'label': '고객 상태',      'value': 'ACTIVE',      'sub': '',              'is_state': True},
+]
+
+MOCKUP_C360_CONSENT_BADGES = ['BANK', 'CARD', 'INS', 'HLT', 'SEC', 'ONINS', 'HOS', 'WBL']
+MOCKUP_C360_OWNED_BADGES   = ['은행', '카드', '보험', '헬스']
+
+MOCKUP_C360_TOPN = [
+    {'rank': 1, 'product': 'PB 프리미엄 정기예금 (BANK)', 'score': 92.5},
+    {'rank': 2, 'product': 'VIP Black 카드 (CARD)',       'score': 88.3},
+    {'rank': 3, 'product': '건강 종합검진 패키지 (HLT)',  'score': 75.1},
+    {'rank': 4, 'product': '암 보장 보험 (INS)',          'score': 71.8},
+]
+
+MOCKUP_C360_NBA = {
+    'action': 'INSURANCE_UPSELL',
+    'targets': [
+        {'label': 'VIP 등급 달성',  'state': '달성'},
+        {'label': '플랫폼 가입',    'state': '완료'},
+    ],
+    'response_prob': 84,
+    'updated_at':    '2026-05-17 04:00 (오늘)',
+}
+
+# 설계서 V5 P2 row 29-31 — On-Prem customer_360_profile 정적 룰 기반 점수
+MOCKUP_C360_PRECISION = [
+    {'label': '금융', 'value': 78, 'color': '#1e293b'},
+    {'label': '자산', 'value': 75, 'color': '#1e293b'},
+    {'label': '위험', 'value': 12, 'color': '#dc2626'},
+]
+
+MOCKUP_C360_RECENT_RECOMMEND = [
+    {'time': '05-15 14:25', 'product': 'PB 예금 추천',  'state': 'PURCHASED', 'badge_bg': '#dcfce7', 'badge_color': '#16a34a'},
+    {'time': '05-15 14:10', 'product': 'VIP 카드 추천', 'state': 'CLICKED',   'badge_bg': '#dbeafe', 'badge_color': '#2563eb'},
+    {'time': '05-14 09:40', 'product': '건강검진 추천', 'state': 'CLICKED',   'badge_bg': '#dbeafe', 'badge_color': '#2563eb'},
+    {'time': '05-14 09:30', 'product': '보험 추천',     'state': 'SHOWN',     'badge_bg': '#f1f5f9', 'badge_color': '#64748b'},
+]
+
+MOCKUP_C360_RECENT_ACTIVITY = [
+    {'time': '05-15 14:25', 'event': '메인 페이지 진입 (MAIN)',  'badge': 'VIEW',   'badge_bg': '#f1f5f9', 'badge_color': '#64748b'},
+    {'time': '05-15 14:22', 'event': '상품 상세 클릭 (PB 예금)', 'badge': 'CLICK',  'badge_bg': '#dbeafe', 'badge_color': '#2563eb'},
+    {'time': '05-15 14:20', 'event': '배너 클릭 (VIP 이벤트)',   'badge': 'BANNER', 'badge_bg': '#fef3c7', 'badge_color': '#d97706'},
+]
+
+
+# ── P3 AI 추천 ──────────────────────────────────────────────
+MOCKUP_AI_KPI4 = [
+    {'label': '추천 CTR (클릭률)', 'value': '14.2%',  'sub': '↑ 1.3% (전주 대비)',           'accent': '#16a34a'},
+    {'label': '거래율 CVR (전환)', 'value': '9.8%',   'sub': '↑ 0.8% (전주 대비)',           'accent': '#3b82f6'},
+    {'label': 'AI 예측 적중 평균', 'value': '0.42',   'sub': 'vip_prob / signup / rec 평균', 'accent': '#1e293b'},
+    {'label': '분석 대상 고객',    'value': '60,000', 'sub': 'DynamoDB 보유',                'accent': '#6366f1'},
+]
+
+MOCKUP_AI_CAT_DONUT = [
+    {'name': '금융 (예금/적금)', 'pct': 28, 'color': '#3b82f6'},
+    {'name': '카드',             'pct': 22, 'color': '#f59e0b'},
+    {'name': '보험',             'pct': 18, 'color': '#14b8a6'},
+    {'name': '건강',             'pct': 15, 'color': '#dc2626'},
+    {'name': '연금',             'pct': 17, 'color': '#6366f1'},
+]
+
+MOCKUP_AI_AGE_PERF = [
+    {'age': '20대',  'ctr': 11, 'cvr':  6},
+    {'age': '30대',  'ctr': 14, 'cvr':  9},
+    {'age': '40대',  'ctr': 17, 'cvr': 11},
+    {'age': '50대',  'ctr': 15, 'cvr': 13},
+    {'age': '60대+', 'ctr': 18, 'cvr': 15},
+]
+
+MOCKUP_AI_GRADE_DIST = [
+    {'grade': '회복(BASIC)', 'count': 18_420, 'color': '#94a3b8', 'pct': 30.7},
+    {'grade': '안정(MED)',   'count': 12_340, 'color': '#3b82f6', 'pct': 20.6},
+    {'grade': '성장(GOLD)',  'count': 15_200, 'color': '#14b8a6', 'pct': 25.3},
+    {'grade': '도약(SLV)',   'count':  9_840, 'color': '#6366f1', 'pct': 16.4},
+    {'grade': 'VIP',         'count':  4_200, 'color': '#f59e0b', 'pct':  7.0},
+]
+
+MOCKUP_AI_FEATURE_DIST = [
+    {'name': '평균 자산 크기',     'pct': 0.184},
+    {'name': '카드 월 평균 사용액','pct': 0.146},
+    {'name': '예금 금액',          'pct': 0.123},
+    {'name': '건강 점수',          'pct': 0.097},
+    {'name': '활동량 (출생일)',     'pct': 0.085},
+    {'name': '소득 등급',          'pct': 0.072},
+]
+
+MOCKUP_AI_RECDATA = [
+    {'name': 'RECOMMEND_PB',        'count': 14_281},
+    {'name': 'RECOMMEND_CARD',      'count':  8_902},
+    {'name': 'RECOMMEND_INSURANCE', 'count':  6_842},
+    {'name': 'RECOMMEND_HEALTH',    'count':  5_124},
+    {'name': 'RECOMMEND_FUND',      'count':  4_310},
+    {'name': 'RECOMMEND_PENSION',   'count':  3_872},
+    {'name': 'RECOMMEND_WELLNESS',  'count':  2_724},
+]
+
+MOCKUP_AI_INSIGHT = {
+    'source': 'lifesync_serving.v_customer_summary — VIEW (customer_360 + score_mart + health_mart JOIN)',
+    'rows': [
+        {'label': '고소득 + 고자산', 'value': '42,189명',  'sub': 'VIP 후보'},
+        {'label': '의료비 가입',     'value': '8,420명',   'sub': '의료 가입 비율'},
+        {'label': '플랫폼 가입자',   'value': '187,420명', 'sub': '평균 회복 비율'},
+    ],
+}
+
+MOCKUP_AI_DDB_HISTOGRAM = [
+    {'bucket': '0-20',   'count':    342, 'color': '#94a3b8'},
+    {'bucket': '20-40',  'count':  4_281, 'color': '#3b82f6'},
+    {'bucket': '40-60',  'count': 18_512, 'color': '#6366f1'},
+    {'bucket': '60-70',  'count': 21_204, 'color': '#14b8a6'},
+    {'bucket': '70-80',  'count': 18_661, 'color': '#6366f1'},
+    {'bucket': '80-90',  'count':  9_412, 'color': '#3b82f6'},
+    {'bucket': '90-100', 'count':  2_188, 'color': '#f59e0b'},
+]
+
+MOCKUP_AI_PR_MODELS = [
+    {'name': 'VIP 예측 모델',  'precision': 66.7, 'recall': 80.9},
+    {'name': '추천 반응 모델', 'precision': 81.2, 'recall': 75.4},
+]
+
+
+# ── P4 Network & Connectivity ───────────────────────────────
+MOCKUP_NET_TOPOLOGY = {
+    'aws': [
+        {'name': 'Platform VPC', 'bg': '#fef3c7', 'border': '#f59e0b', 'lines': ['Aurora, Redis,', 'DynamoDB, Lambda,', 'API Gateway, ALB']},
+        {'name': 'Data VPC',     'bg': '#dbeafe', 'border': '#3b82f6', 'lines': ['Glue, EMR,', 'Kinesis,', 'Stream Lambda']},
+        {'name': 'Group VM VPC', 'bg': '#dcfce7', 'border': '#16a34a', 'lines': ['BANK/CARD/SEC/INS/', 'ONINS/HLT/HOS EC2,', 'Wearable EC2']},
+    ],
+    'gcp':    {'name': 'GCP',                'bg': '#fce7f3', 'border': '#ec4899', 'lines': ['VPC + PSC Endpoint', 'BigQuery / Vertex AI', 'Cloud Run']},
+    'onprem': {'name': 'On-Prem (VirtualBox)','bg': '#e0e7ff', 'border': '#6366f1', 'lines': ['Local Lab', 'ls-db (MySQL)', 'ls-token (Tokenization)', 'ls-api (PrivateAPI)']},
+}
+
+MOCKUP_NET_AWS_PLATFORM = {
+    'title': 'AWS Platform VPC', 'badge': 'HEX', 'badge_bg': '#fef3c7', 'badge_color': '#d97706',
+    'rows': [
+        {'name': 'Aurora Cluster',     'state': 'available', 'state_color': '#16a34a', 'sub': '10.0.x.x / 3306'},
+        {'name': 'ElastiCache Redis',  'state': 'available', 'state_color': '#16a34a', 'sub': '10.0.x.x / 6379'},
+        {'name': 'DynamoDB',           'state': 'ACTIVE',    'state_color': '#16a34a', 'sub': '4 tables · 1.2M items'},
+        {'name': 'Lambda x2',          'state': 'available', 'state_color': '#16a34a', 'sub': 'Latency · Errors P90 0.2%'},
+        {'name': 'API Gateway',        'state': 'available', 'state_color': '#16a34a', 'sub': '10.0.x.x / 443'},
+        {'name': 'ALB Target Group',   'state': 'healthy',   'state_color': '#16a34a', 'sub': '4 targets healthy'},
+    ],
+}
+
+MOCKUP_NET_AWS_DATA = {
+    'title': 'AWS Data VPC', 'badge': 'PRIV', 'badge_bg': '#fef3c7', 'badge_color': '#d97706',
+    'rows': [
+        {'name': 'Glue Jobs',         'state': 'SUCCEEDED', 'state_color': '#16a34a', 'sub': '06:00 batch + ad-hoc 12'},
+        {'name': 'EMR Cluster',       'state': 'WAITING',   'state_color': '#f59e0b', 'sub': 'm5.xl x 3 · idle'},
+        {'name': 'S3 (Raw / Curated)','state': '',           'state_color': '',         'sub': '847K objs · 12.4 GB'},
+        {'name': 'Kinesis',           'state': 'ACTIVE',    'state_color': '#16a34a', 'sub': '412/min · wearable-stream'},
+        {'name': 'Stream Lambda',     'state': 'ACTIVE',    'state_color': '#16a34a', 'sub': 'IncomingRecords avg 312'},
+    ],
+}
+
+MOCKUP_NET_AWS_GROUPVM = {
+    'title': 'AWS Group VM VPC', 'badge': '', 'badge_bg': '', 'badge_color': '',
+    'rows': [
+        {'name': 'BANK EC2',     'state': '',      'state_color': '',         'sub': 'i-0a1 · 10.0.x.x'},
+        {'name': 'CARD EC2',     'state': '',      'state_color': '',         'sub': 'i-0a2 · 10.0.x.x'},
+        {'name': 'SEC EC2',      'state': '',      'state_color': '',         'sub': 'i-0a3 · 10.0.x.x'},
+        {'name': 'INS EC2',      'state': '',      'state_color': '',         'sub': 'i-0a4 · 10.0.x.x'},
+        {'name': 'ONINS EC2',    'state': '',      'state_color': '',         'sub': 'i-0a5 · 10.0.x.x'},
+        {'name': 'HLT EC2',      'state': '',      'state_color': '',         'sub': 'i-0a6 · 10.0.x.x'},
+        {'name': 'HOS EC2',      'state': '',      'state_color': '',         'sub': 'i-0a7 · 10.0.x.x'},
+        {'name': 'Wearable EC2', 'state': 'agent', 'state_color': '#64748b',  'sub': 'i-0a8 · 10.0.x.x'},
+    ],
+}
+
+MOCKUP_NET_AWS_CONNECTIVITY = {
+    'title': 'AWS Connectivity', 'badge': 'HEX', 'badge_bg': '#fef3c7', 'badge_color': '#d97706',
+    'rows': [
+        {'name': 'Transit Gateway',    'state': 'available', 'state_color': '#16a34a', 'sub': 'tgw-0a3b8c2 · att 3'},
+        {'name': 'Site to Site VPN',   'state': 'UP / UP',   'state_color': '#16a34a', 'sub': '2 tunnels · BGP 65000'},
+        {'name': 'TGW VPC Attachment', 'state': 'available', 'state_color': '#16a34a', 'sub': 'Platform · Data · GroupVM'},
+        {'name': 'Route Table',        'state': '',          'state_color': '',         'sub': 'Symmetric routing 9 rules'},
+    ],
+}
+
+MOCKUP_NET_GCP = {
+    'title': 'GCP', 'badge': '', 'badge_bg': '', 'badge_color': '',
+    'rows': [
+        {'name': 'BigQuery',           'state': 'DEPLOYED', 'state_color': '#16a34a', 'sub': 'dataset: lifesync_dwh'},
+        {'name': 'Vertex AI Endpoint', 'state': 'DEPLOYED', 'state_color': '#16a34a', 'sub': 'nba-v2.3.1 · 24h 996K'},
+        {'name': 'Cloud Run',          'state': '',          'state_color': '',         'sub': 'feature-svc · 2 rev'},
+        {'name': 'PSC Endpoint',       'state': 'ACTIVE',   'state_color': '#16a34a', 'sub': '10.20.x.x · BigQuery'},
+    ],
+}
+
+MOCKUP_NET_ONPREM = {
+    'title': 'On-Prem VirtualBox', 'badge': 'Local Lab', 'badge_bg': '#e0e7ff', 'badge_color': '#4f46e5',
+    'rows': [
+        {'name': 'VirtualBox VM (5)',    'state': 'Running',   'state_color': '#16a34a', 'sub': 'all VMs running'},
+        {'name': 'Local MySQL',          'state': 'Healthy',   'state_color': '#16a34a', 'sub': '3306 · lifesync 8.0'},
+        {'name': 'Tokenization Service', 'state': 'Reach OK',  'state_color': '#16a34a', 'sub': '192.168.56.12 / 7000'},
+        {'name': 'PrivateAPI',           'state': 'Active',    'state_color': '#16a34a', 'sub': '192.168.56.13 / 8000'},
+    ],
+}
+
+# 설계서 V5 P4 row 47-52 — Wearable 6 지표 (심박/혈압/SpO2/운동량/이상이벤트/송신)
+MOCKUP_NET_WEARABLE = [
+    {'icon': '❤', 'label': '심박수',       'value': '72',       'sub': 'bpm'},
+    {'icon': '🩺','label': '혈압',         'value': '118 / 76', 'sub': 'mmHg'},
+    {'icon': '🫁','label': '산소 포화도',  'value': '98',       'sub': '%'},
+    {'icon': '🚶','label': '운동량',       'value': '7,428',    'sub': 'steps'},
+    {'icon': '🚨','label': '이상 이벤트',  'value': '2',        'sub': '24h Alert · SNS'},
+    {'icon': '📡','label': '데이터 송신',   'value': '100%',     'sub': 'Kinesis PutRecord'},
+]
+
+MOCKUP_NET_API_ENDPOINTS = [
+    {'name': '/api/tgw/route',           'desc': 'Transit Gateway 라우팅 점검', 'method': 'GET'},
+    {'name': '/api/s2svpn/status',       'desc': 'Site-to-Site VPN 상태',        'method': 'GET'},
+    {'name': '/api/groupvm/list',        'desc': 'Group VM 7 EC2 (BANK/CARD/SEC/INS/ONINS/HLT/HOS)', 'method': 'GET'},
+    {'name': '/api/onprem/local-status', 'desc': 'On-Prem VirtualBox VM + 서비스 헬스 (Lambda 경유)','method': 'GET'},
 ]

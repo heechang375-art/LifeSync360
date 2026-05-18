@@ -51,30 +51,8 @@
             </div>
         </section>
 
-        <!-- ── 추천 탭 ── -->
-        <section id="tab-recommend" class="tab-content">
-            <div class="company-tabs">
-                {% for rec in recommendations %}
-                <button class="company-btn {% if loop.first %}active{% endif %}" data-rec="{{ loop.index0 }}">{{ rec.name }}</button>
-                {% endfor %}
-            </div>
-            {% for rec in recommendations %}
-            <div class="company-panel {% if loop.first %}active{% endif %}" id="rec-{{ loop.index0 }}">
-                <div class="rank-list">
-                    {% for p in rec.products %}
-                    <a class="rank-item" href="/product/{{ p.id }}">
-                        <span class="rank-num rank-{{ loop.index }}">{{ loop.index }}</span>
-                        <div class="rank-info">
-                            <span class="rank-meta">{{ rec.name }} · {{ p.type }}</span>
-                            <p class="rank-name">{{ p.name }}</p>
-                            <p class="rank-desc">{{ p.desc }}</p>
-                        </div>
-                    </a>
-                    {% endfor %}
-                </div>
-            </div>
-            {% endfor %}
-        </section>
+        <!-- ── 추천 탭 (JS 가 innerHTML 로 채움) ── -->
+        <section id="tab-recommend" class="tab-content"></section>
 
         <!-- ── MY 탭 ── -->
         <section id="tab-my" class="tab-content">
@@ -84,10 +62,15 @@
                 <div id="nba-text" style="font-size: 16px; font-weight: 600;">-</div>
             </div>
 
-            <!-- 등급 맞춤 캠페인 배너 -->
-            <div id="campaigns-section" style="margin: 16px 0;">
-                <div style="font-size: 13px; font-weight: 600; padding: 0 16px; margin-bottom: 8px; color: #475569;">맞춤 캠페인</div>
-                <div id="campaigns-scroll" style="display: flex; flex-direction: column; gap: 8px; padding: 0 16px;"></div>
+            <!-- 신청 내역 (customer_product_application JOIN product/company/category) -->
+            <div style="margin: 16px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-size:15px; font-weight:700; color:#0f172a;">📄 내 신청 내역</span>
+                    <span id="my-applications-count" style="font-size:12px; color:#94a3b8;"></span>
+                </div>
+                <div id="my-applications-list" style="display:flex; flex-direction:column; gap:10px;">
+                    <div style="padding:14px; color:#94a3b8; font-size:13px; text-align:center; background:#fff; border:1px solid #e2e8f0; border-radius:12px;">불러오는 중...</div>
+                </div>
             </div>
         </section>
 
@@ -136,11 +119,11 @@
         if (!token) { window.location.href = '/login'; return; }
         const headers = { 'Authorization': `Bearer ${token}` };
 
-        const [meRes, dashRes, recRes, campRes] = await Promise.all([
+        const [meRes, dashRes, recRes, appsRes] = await Promise.all([
             fetch('/api/me', { headers }),
             fetch('/api/dashboard', { headers }),
             fetch('/api/recommendations', { headers }),
-            fetch('/api/campaigns', { headers }),
+            fetch('/api/my-applications', { headers }),
         ]);
 
         if (!meRes.ok) { window.location.href = '/login'; return; }
@@ -175,28 +158,6 @@
             }
         }
 
-        // 등급 맞춤 캠페인 배너
-        if (campRes.ok) {
-            const camps = await campRes.json();
-            if (Array.isArray(camps) && camps.length) {
-                const colors = ['#fde68a', '#bfdbfe', '#fbcfe8', '#bbf7d0', '#fed7aa'];
-                document.getElementById('campaigns-scroll').innerHTML = camps.map((c, i) => `
-                    <div style="padding: 12px; border-radius: 10px; background: ${colors[i % colors.length]}; display: flex; align-items: center; gap: 12px;">
-                        <div style="font-size: 28px; flex-shrink: 0;">${c.icon || '🎯'}</div>
-                        <div style="flex: 1; min-width: 0;">
-                            <div style="font-weight: 600; font-size: 14px; color: #1e293b; margin-bottom: 2px;">${c.title}</div>
-                            <div style="font-size: 12px; color: #475569; line-height: 1.4; margin-bottom: 4px;">${c.desc}</div>
-                            <div style="font-size: 10px; color: #64748b;">${c.period || ''}</div>
-                        </div>
-                    </div>
-                `).join('');
-            } else {
-                document.getElementById('campaigns-section').style.display = 'none';
-            }
-        } else {
-            document.getElementById('campaigns-section').style.display = 'none';
-        }
-
         if (recRes.ok) {
             const data = await recRes.json();
             // 신규 응답 호환: {meta, products}. 구 응답 (list) 도 호환.
@@ -210,28 +171,39 @@
                 document.getElementById('nba-section').style.display = '';
             }
 
-            // [Home 탭] 계열사 분리 X — 상위 6개 단일 list
+            // [Home 탭] 계열사 분리 X — 상위 6개 카드형 (rank + reason + score)
             const homeContainer = document.getElementById('home-rec-cats');
             homeContainer.innerHTML = '';
             const homeTop = products.slice(0, 6);
             if (homeTop.length === 0) {
                 homeContainer.innerHTML = '<div style="padding:14px;color:#94a3b8;font-size:13px;text-align:center;">추천 상품이 준비되는 중이에요</div>';
             } else {
-                const homeBlock = document.createElement('div');
-                homeBlock.className = 'home-rec-cat';
-                homeBlock.innerHTML = `
-                    <div class="home-rec-cat-label">맞춤 추천</div>
-                    ${homeTop.map(p => `
-                        <a class="home-rec-item" href="/product/${p.product_code}"
-                           onclick="emitEvent('recommendation_click', this.querySelector('.home-rec-item-name').textContent)">
-                            <span class="home-rec-item-name">${p.product_name}</span>
-                            <span class="home-rec-item-tag" style="background:#eff6ff;color:#1e40af;">
-                                ${p.category_name || p.category_code || ''}
-                            </span>
+                const rankColor = (i) => i === 0 ? '#ef4444' : i === 1 ? '#f59e0b' : i === 2 ? '#10b981' : '#94a3b8';
+                homeContainer.innerHTML = `
+                    <div style="display:flex;justify-content:space-between;align-items:flex-end;padding:0 4px 10px;">
+                        <div>
+                            <div style="font-size:15px;font-weight:700;color:#0f172a;">🎁 나를 위한 맞춤 추천</div>
+                            <div style="font-size:12px;color:#94a3b8;margin-top:2px;">recommend_rule + cross_sell + NBA 매칭 · ${products.length}건</div>
+                        </div>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:10px;">
+                    ${homeTop.map((p, i) => `
+                        <a href="/product/${p.product_code}"
+                           onclick="emitEvent('recommendation_click', '${(p.product_name||'').replace(/'/g,'\\\\\'')}')"
+                           style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;display:flex;gap:12px;align-items:center;cursor:pointer;text-decoration:none;color:#0f172a;box-shadow:0 1px 2px rgba(0,0,0,.03);">
+                            <div style="flex-shrink:0;width:32px;height:32px;border-radius:8px;background:${rankColor(i)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">${i+1}</div>
+                            <div style="flex:1;min-width:0;">
+                                <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:2px;">${p.product_name}</div>
+                                <div style="font-size:12px;color:#475569;line-height:1.4;">💡 ${p.reason || (p.category_name || '') + ' 카테고리 매칭'}</div>
+                            </div>
+                            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;">
+                                <span style="padding:2px 8px;font-size:11px;border-radius:999px;background:#eff6ff;color:#1e40af;">${p.category_name || p.category_code || ''}</span>
+                                ${p.recommendation_score ? `<span style="font-size:11px;color:#94a3b8;">점수 ${p.recommendation_score}</span>` : ''}
+                            </div>
                         </a>
                     `).join('')}
+                    </div>
                 `;
-                homeContainer.appendChild(homeBlock);
             }
 
             // [Recommend 탭] 계열사 분리 X — 단일 panel 에 전체 list 채움
@@ -308,30 +280,28 @@
         });
     });
 
-    document.querySelectorAll('#tab-recommend .company-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('#tab-recommend .company-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('#tab-recommend .company-panel').forEach(p => p.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById(`rec-${btn.dataset.rec}`).classList.add('active');
-            emitEvent('tab_click', btn.textContent.trim());
-        });
-    });
+    // session_id 일관 — 탭 단위로 sessionStorage 유지
+    function getSessionId() {
+        let sid = sessionStorage.getItem('ls_session_id');
+        if (!sid) {
+            sid = 'S-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+            sessionStorage.setItem('ls_session_id', sid);
+        }
+        return sid;
+    }
 
-    document.querySelectorAll('#tab-recommend .rank-item').forEach(a => {
-        a.addEventListener('click', () => {
-            const name = a.querySelector('.rank-name')?.textContent.trim();
-            if (name) emitEvent('recommendation_click', name);
-        });
-    });
-
-    function emitEvent(eventType, eventTarget) {
+    function emitEvent(eventType, eventTarget, productId) {
         const token = localStorage.getItem('ls_token');
         if (!token) return;
         fetch('/api/event', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ event_type: eventType, event_target: eventTarget }),
+            body: JSON.stringify({
+                event_type:   eventType,
+                event_target: eventTarget,
+                product_id:   productId || null,
+                session_id:   getSessionId(),
+            }),
         }).catch(() => {});
     }
 

@@ -3,9 +3,15 @@ import hashlib
 import boto3
 import json
 import os
+import socket
 import subprocess
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+
 import pymysql
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from dbutils.pooled_db import PooledDB
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
@@ -16,6 +22,24 @@ DEPLOY_TOKEN = os.environ['DEPLOY_TOKEN']
 REGION = 'ap-northeast-2'
 SECRET_ID = 'lifesync/onprem-db'
 DB_NAME = 'lifesync_onprem'
+
+DB_POOL_MIN     = int(os.environ.get('DB_POOL_MIN', '2'))
+DB_POOL_MAX     = int(os.environ.get('DB_POOL_MAX', '10'))
+DB_POOL_MAXIDLE = int(os.environ.get('DB_POOL_MAXIDLE', '5'))
+
+# Local lab VM 매핑 (host:port TCP 헬스용). 운영 환경 변경 시 env override.
+VM_HOSTS = {
+    'ls-db':    (os.environ.get('VM_LS_DB_HOST',    '192.168.56.11'), int(os.environ.get('VM_LS_DB_PORT',    '3306'))),
+    'ls-token': (os.environ.get('VM_LS_TOKEN_HOST', '192.168.56.12'), int(os.environ.get('VM_LS_TOKEN_PORT', '8000'))),
+    'ls-api':   (os.environ.get('VM_LS_API_HOST',   '192.168.56.13'), int(os.environ.get('VM_LS_API_PORT',   '80'))),
+}
+TOKENIZATION_HEALTH_URL = os.environ.get('TOKENIZATION_HEALTH_URL', 'http://192.168.56.12:8000/health')
+
+# schema_reference.md 기준 8 테이블
+_ONPREM_TABLES = [
+    'users', 'master_customer', 'customer_pii_secure', 'customer_360_profile',
+    'customer_identity_map', 'consent', 'matching_audit_log', 'token_map',
+]
 
 _aesgcm = None
 
@@ -49,14 +73,46 @@ def hash_password(password):
     return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
 
+_db_pool = PooledDB(
+    creator        = pymysql,
+    mincached      = DB_POOL_MIN,
+    maxcached      = DB_POOL_MAXIDLE,
+    maxconnections = DB_POOL_MAX,
+    blocking       = True,        # pool 고갈 시 대기 (drop 대신)
+    ping           = 1,           # 매 checkout 시 SELECT 1 (stale 방지)
+    host           = os.environ['DB_HOST'],
+    user           = os.environ['DB_USER'],
+    password       = os.environ['DB_PASS'],
+    database       = DB_NAME,
+    cursorclass    = pymysql.cursors.DictCursor,
+    charset        = 'utf8mb4',
+    autocommit     = False,
+)
+
+
 def get_db():
-    return pymysql.connect(
-        host=os.environ['DB_HOST'],
-        user=os.environ['DB_USER'],
-        password=os.environ['DB_PASS'],
-        database=DB_NAME,
-        cursorclass=pymysql.cursors.DictCursor
-    )
+    """pool 에서 connection 반환. 기존 호출자는 그대로 — db.close() 는 pool 반환."""
+    return _db_pool.connection()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def _tcp_check(host: str, port: int, timeout: float = 1.5) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _http_check(url: str, timeout: float = 2.0) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return 200 <= r.status < 300
+    except (urllib.error.URLError, OSError):
+        return False
 
 
 @app.get('/health')
@@ -90,6 +146,72 @@ def get_customer(global_id: str):
     finally:
         db.close()
     return customer
+
+
+@app.get('/internal/profile/list-all')
+def list_profile_all(page: int = 0, size: int = 10000):
+    """
+    customer_360_profile 전체 분포 페이지 조회 (analytics_aggregator batch 용).
+    1M 행을 sync invoke 6MB 응답 제한에 맞추기 위해 page/size 페이지네이션.
+    items 개수가 size 보다 작으면 마지막 페이지.
+    """
+    if size < 1 or size > 50000:
+        raise HTTPException(status_code=400, detail='size: 1~50000 범위')
+    if page < 0:
+        raise HTTPException(status_code=400, detail='page: 0 이상')
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                'SELECT global_id, gender, age_band, region, income_grade, asset_grade '
+                'FROM customer_360_profile '
+                'ORDER BY global_id LIMIT %s OFFSET %s',
+                (size, page * size)
+            )
+            rows = cur.fetchall()
+    finally:
+        db.close()
+    return {'page': page, 'size': size, 'count': len(rows), 'items': rows}
+
+
+@app.get('/internal/consent/list-all')
+def list_consent_all(page: int = 0, size: int = 10000):
+    """
+    consent 스냅샷 배치용 — users + consent JOIN 페이지 조회 (user 페이지 단위).
+
+    user 1명당 1 row, consents 는 JSON_ARRAYAGG 로 8 도메인 묶음.
+    consent_snapshot_aggregator Lambda 가 페이지 루프 호출 후 S3 적재.
+    """
+    if size < 1 or size > 50000:
+        raise HTTPException(status_code=400, detail='size: 1~50000 범위')
+    if page < 0:
+        raise HTTPException(status_code=400, detail='page: 0 이상')
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                'SELECT u.global_id, u.ls_user_id, u.user_status, '
+                '       (SELECT JSON_ARRAYAGG(JSON_OBJECT('
+                '            \'domain\',        c.domain, '
+                '            \'consent_flag\',  c.consent_flag, '
+                '            \'consent_dt\',    c.consent_dt, '
+                '            \'revoke_dt\',     c.revoke_dt)) '
+                '        FROM consent c WHERE c.global_id = u.global_id) AS consents '
+                'FROM users u '
+                "WHERE u.user_status = 'ACTIVE' "
+                'ORDER BY u.global_id LIMIT %s OFFSET %s',
+                (size, page * size)
+            )
+            rows = cur.fetchall()
+    finally:
+        db.close()
+    # consents 는 MySQL이 JSON 문자열로 반환할 수 있으므로 dict로 정규화
+    for r in rows:
+        if isinstance(r.get('consents'), str):
+            r['consents'] = json.loads(r['consents']) if r['consents'] else []
+        elif r.get('consents') is None:
+            r['consents'] = []
+    return {'page': page, 'size': size, 'count': len(rows), 'items': rows}
 
 
 @app.get('/internal/consent/{global_id}')
@@ -155,8 +277,8 @@ class RegisterRequest(BaseModel):
     password_hash: str
     name:          Optional[str] = None
     mobile:        Optional[str] = None
-    rrn:           Optional[str] = None
     address:       Optional[str] = None
+    # rrn (주민번호) — 운영 미수집 (2026-05-18 ③ 결정). DDL `rrn_enc` 컬럼은 nullable 유지
 
 @app.post('/internal/auth/register')
 def auth_register(req: RegisterRequest):
@@ -171,13 +293,14 @@ def auth_register(req: RegisterRequest):
                 'INSERT INTO users (ls_user_id, global_id, login_email, password_hash, mobile) VALUES (%s, %s, %s, %s, %s)',
                 (req.ls_user_id, req.global_id, req.email, req.password_hash, req.mobile)
             )
+            # rrn_enc 컬럼은 미명시 → DB default NULL (운영 미수집 정책)
             cur.execute(
                 '''INSERT INTO customer_pii_secure
-                       (pii_token, global_id, customer_name_enc, rrn_enc, mobile_enc, email_enc, address_enc)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)''',
+                       (pii_token, global_id, customer_name_enc, mobile_enc, email_enc, address_enc)
+                   VALUES (%s, %s, %s, %s, %s, %s)''',
                 (
                     pii_token_of(req.global_id), req.global_id,
-                    encrypt_pii(req.name), encrypt_pii(req.rrn), encrypt_pii(req.mobile),
+                    encrypt_pii(req.name), encrypt_pii(req.mobile),
                     encrypt_pii(req.email), encrypt_pii(req.address),
                 )
             )
@@ -189,11 +312,12 @@ def auth_register(req: RegisterRequest):
 
 @app.get('/internal/pii/{global_id}')
 def get_pii(global_id: str):
+    """PII 4 필드 복호화 반환 — rrn 은 운영 미수집 정책으로 응답 제외."""
     db = get_db()
     try:
         with db.cursor() as cur:
             cur.execute(
-                'SELECT customer_name_enc, rrn_enc, mobile_enc, email_enc, address_enc'
+                'SELECT customer_name_enc, mobile_enc, email_enc, address_enc'
                 ' FROM customer_pii_secure WHERE global_id = %s',
                 (global_id,)
             )
@@ -205,7 +329,6 @@ def get_pii(global_id: str):
     return {
         'global_id': global_id,
         'name':      decrypt_pii(row['customer_name_enc']),
-        'rrn':       decrypt_pii(row['rrn_enc']),
         'mobile':    decrypt_pii(row['mobile_enc']),
         'email':     decrypt_pii(row['email_enc']),
         'address':   decrypt_pii(row['address_enc']),
@@ -273,6 +396,174 @@ async def trigger_deploy(request: Request):
         raise HTTPException(status_code=401, detail='배포 토큰 불일치')
     subprocess.Popen(['/opt/private-api/trigger_ansible.sh'])
     return {'status': 'triggered'}
+
+
+# ── P1 카운트 (admin 통합 KPI) ────────────────────────────
+
+@app.get('/internal/count/master_customer')
+def count_master_customer(status: str = 'ACTIVE'):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute('SELECT COUNT(*) AS cnt FROM master_customer WHERE customer_status = %s', (status,))
+            row = cur.fetchone()
+    finally:
+        db.close()
+    return {'status': status, 'count': row['cnt']}
+
+
+@app.get('/internal/count/users')
+def count_users(status: str = 'ACTIVE'):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute('SELECT COUNT(*) AS cnt FROM users WHERE user_status = %s', (status,))
+            row = cur.fetchone()
+    finally:
+        db.close()
+    return {'status': status, 'count': row['cnt']}
+
+
+@app.get('/internal/count/users_consented')
+def count_users_consented():
+    """active 회원 중 1개 도메인 이상에서 현재 동의 상태(Y + revoke_dt IS NULL)인 ls_user_id 카운트."""
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                'SELECT COUNT(DISTINCT u.ls_user_id) AS cnt '
+                'FROM users u JOIN consent c ON u.global_id = c.global_id '
+                "WHERE u.user_status = 'ACTIVE' AND c.consent_flag = 'Y' AND c.revoke_dt IS NULL"
+            )
+            row = cur.fetchone()
+    finally:
+        db.close()
+    return {'count': row['cnt']}
+
+
+# ── P2 단건 조회 (admin 고객 상세) ────────────────────────
+
+@app.get('/internal/master_customer/{global_id}')
+def get_master_customer(global_id: str):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute('SELECT * FROM master_customer WHERE global_id = %s', (global_id,))
+            row = cur.fetchone()
+    finally:
+        db.close()
+    if not row:
+        raise HTTPException(status_code=404, detail='Customer not found')
+    return row
+
+
+@app.get('/internal/identity_map/{global_id}')
+def get_identity_map(global_id: str):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                'SELECT domain, source_customer_id, created_dt '
+                'FROM customer_identity_map '
+                "WHERE global_id = %s AND active_flag = 'Y' "
+                'ORDER BY domain',
+                (global_id,)
+            )
+            rows = cur.fetchall()
+    finally:
+        db.close()
+    return {'global_id': global_id, 'identities': rows}
+
+
+# ── P4 헬스 체크 (admin Network 페이지) ────────────────────
+
+@app.get('/internal/health/vm/{vm_id}')
+def health_vm(vm_id: str):
+    if vm_id not in VM_HOSTS:
+        raise HTTPException(status_code=404, detail=f'Unknown vm_id: {vm_id}')
+    host, port = VM_HOSTS[vm_id]
+    ok = _tcp_check(host, port)
+    return {
+        'vm_id':  vm_id,
+        'host':   host,
+        'port':   port,
+        'status': 'pass' if ok else 'fail',
+        'time':   _now_iso(),
+    }
+
+
+@app.get('/internal/health/mysql')
+def health_mysql():
+    """local MySQL 헬스 — schema_reference 기준 8 테이블 존재 확인."""
+    try:
+        db = get_db()
+        try:
+            with db.cursor() as cur:
+                cur.execute('SHOW TABLES')
+                tables = {list(r.values())[0] for r in cur.fetchall()}
+        finally:
+            db.close()
+    except Exception as e:
+        return {'status': 'fail', 'time': _now_iso(), 'error': str(e)[:120]}
+    missing = [t for t in _ONPREM_TABLES if t not in tables]
+    return {
+        'status':  'pass' if not missing else 'warn',
+        'time':    _now_iso(),
+        'tables':  sorted(tables),
+        'missing': missing,
+    }
+
+
+@app.get('/internal/health/tokenization')
+def health_tokenization():
+    ok = _http_check(TOKENIZATION_HEALTH_URL)
+    return {
+        'status':   'pass' if ok else 'fail',
+        'time':     _now_iso(),
+        'endpoint': TOKENIZATION_HEALTH_URL,
+    }
+
+
+@app.get('/internal/health/local-lab')
+def health_local_lab():
+    """4 VM TCP + MySQL + Tokenization 종합. Lambda local_lab_status 가 호출 → admin ops 페이지."""
+    envs   = []
+    checks = {}
+
+    for vm_id, (host, port) in VM_HOSTS.items():
+        ok = _tcp_check(host, port)
+        checks[f'vm:{vm_id}'] = [{
+            'status':        'pass' if ok else 'fail',
+            'componentType': 'system',
+            'observedValue': f'{host}:{port}',
+            'time':          _now_iso(),
+        }]
+        envs.append({
+            'env':   f'VirtualBox · {vm_id}',
+            'state': 'Running' if ok else 'Down',
+            'note':  f'{host}:{port}',
+        })
+
+    mysql_resp = health_mysql()
+    checks['service:mysql'] = [{
+        'status':        mysql_resp['status'],
+        'componentType': 'datastore',
+        'observedValue': f"{len(mysql_resp.get('tables', []))} tables",
+        'time':          mysql_resp['time'],
+    }]
+
+    tok_resp = health_tokenization()
+    checks['service:tokenization'] = [{
+        'status':        tok_resp['status'],
+        'componentType': 'component',
+        'observedValue': tok_resp['endpoint'],
+        'time':          tok_resp['time'],
+    }]
+
+    return {
+        'environments': envs,
+        'checks':       checks,
+    }
 
 
 class MatchRequest(BaseModel):

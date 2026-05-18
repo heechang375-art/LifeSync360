@@ -46,10 +46,18 @@
 <script>
     const PRODUCT_ID = {{ item.product_id | default('null') }};
 
+    function getSessionId() {
+        let sid = sessionStorage.getItem('ls_session_id');
+        if (!sid) {
+            sid = 'S-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+            sessionStorage.setItem('ls_session_id', sid);
+        }
+        return sid;
+    }
     function emitEvent(type, target) {
         const token = localStorage.getItem('ls_token');
         if (!token) return;
-        const body = { event_type: type, event_target: target };
+        const body = { event_type: type, event_target: target, session_id: getSessionId() };
         if (PRODUCT_ID) body.product_id = PRODUCT_ID;
         fetch('/api/event', {
             method: 'POST',

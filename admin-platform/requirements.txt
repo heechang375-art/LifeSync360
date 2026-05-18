@@ -1,7 +1,6 @@
 flask==3.1.0
 boto3==1.34.0
 pymysql==1.1.1
-requests==2.31.0
 gunicorn==21.2.0
 redis==5.0.8
 google-cloud-bigquery==3.27.0

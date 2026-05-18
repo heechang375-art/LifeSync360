@@ -2,7 +2,6 @@ import os
 import functools
 
 import boto3
-import requests
 from flask import Flask, render_template, request, redirect, url_for, session
 
 app = Flask(__name__)
@@ -10,12 +9,11 @@ app.secret_key = os.environ.get('SECRET_KEY', 'admin-dev-secret-32bytes-lifesync
 
 USE_MOCK             = os.environ.get('USE_MOCK', 'true').lower() != 'false'  # default true, 명시 'false'만 비Mock
 ADMIN_USER           = os.environ.get('ADMIN_USER', 'admin')
-ADMIN_PASS           = os.environ.get('ADMIN_PASSWORD', 'admin1234')  # TODO: 운영 배포 시 env var로 교체
+ADMIN_PASS           = os.environ['ADMIN_PASSWORD']
 DYNAMO_TABLE         = os.environ.get('DYNAMO_TABLE', 'lifesync-scores')
-DDB_SEGMENT_TABLE    = os.environ.get('DDB_SEGMENT_TABLE',    'analytics_segment_performance')
-DDB_DEMOGRAPHIC_TABLE= os.environ.get('DDB_DEMOGRAPHIC_TABLE','analytics_demographic_summary')
+DDB_SEGMENT_TABLE    = os.environ.get('DDB_SEGMENT_TABLE',    'analytics_segment_daily')
+DDB_DEMOGRAPHIC_TABLE= os.environ.get('DDB_DEMOGRAPHIC_TABLE','analytics_demographic_daily')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
-PRIVATE_API_URL      = os.environ.get('PRIVATE_API_URL', '')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
 
 GRADES = ['VIP', 'GOLD', 'SILVER', 'BASIC', 'CARE']
@@ -54,6 +52,19 @@ from mockup_data import (
     MOCKUP_AFFILIATE_HEALTH, MOCKUP_BACKEND_SERVICES,
     MOCKUP_REDIS_PERSONALIZED, MOCKUP_CROSSSELL_LIST, MOCKUP_RECENT_ERRORS,
     MOCKUP_LOCAL_LAB,
+    # 화이트 샘플 UI 전용
+    MOCKUP_DASH_KPI, MOCKUP_DASH_CLOUD3, MOCKUP_DASH_S3_5, MOCKUP_DASH_RECENT_UPLOADS,
+    MOCKUP_C360_DEFAULT_QUERY, MOCKUP_C360_PROFILE, MOCKUP_C360_STATUS,
+    MOCKUP_C360_CONSENT_BADGES, MOCKUP_C360_OWNED_BADGES,
+    MOCKUP_C360_TOPN, MOCKUP_C360_NBA, MOCKUP_C360_PRECISION,
+    MOCKUP_C360_RECENT_RECOMMEND, MOCKUP_C360_RECENT_ACTIVITY,
+    MOCKUP_AI_KPI4, MOCKUP_AI_CAT_DONUT, MOCKUP_AI_AGE_PERF, MOCKUP_AI_GRADE_DIST,
+    MOCKUP_AI_FEATURE_DIST, MOCKUP_AI_RECDATA, MOCKUP_AI_INSIGHT,
+    MOCKUP_AI_DDB_HISTOGRAM, MOCKUP_AI_PR_MODELS,
+    MOCKUP_NET_TOPOLOGY,
+    MOCKUP_NET_AWS_PLATFORM, MOCKUP_NET_AWS_DATA, MOCKUP_NET_AWS_GROUPVM,
+    MOCKUP_NET_AWS_CONNECTIVITY, MOCKUP_NET_GCP, MOCKUP_NET_ONPREM,
+    MOCKUP_NET_WEARABLE, MOCKUP_NET_API_ENDPOINTS,
 )
 
 
@@ -112,16 +123,28 @@ def _add_rates(funnel_rows):
     return funnel_rows
 
 
-def _get_identities(global_id):
-    if not PRIVATE_API_URL:
-        return []
-    try:
-        resp = requests.get(f'{PRIVATE_API_URL}/internal/customer/{global_id}', timeout=3)
-        if resp.ok:
-            return resp.json().get('identities', [])
-    except Exception:
-        pass
-    return []
+def _load_consent_from_s3(global_id):
+    """동의 스냅샷 일배치 결과 조회 (lifesync-raw/consent/dt=오늘/{gid}.json).
+
+    consent_snapshot_aggregator Lambda 가 매일 KST 03:00 적재.
+    오늘자 객체 없으면 어제 fallback. 둘 다 없으면 빈 결과.
+    응답 구조: {global_id, ls_user_id, user_status, consents: [...], snapshot_dt}
+    """
+    import datetime as _dt
+    bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', '')
+    if not bucket:
+        return {'global_id': global_id, 'consents': []}
+    kst = _dt.timezone(_dt.timedelta(hours=9))
+    today = _dt.datetime.now(kst).date()
+    for offset in (0, 1):    # 오늘 미적재 시 어제 fallback
+        key = f"consent/dt={(today - _dt.timedelta(days=offset)).isoformat()}/{global_id}.json"
+        try:
+            import json as _j
+            obj = _boto('s3').get_object(Bucket=bucket, Key=key)
+            return _j.loads(obj['Body'].read())
+        except Exception:
+            continue
+    return {'global_id': global_id, 'consents': []}
 
 
 # ── boto3 ping 헬퍼 (운영 모니터링·Cloud Status용) ──────────
@@ -895,75 +918,37 @@ def overview():
     return redirect(url_for('dashboard'))
 
 
-# ── Executive Dashboard ───────────────────────────────
+# ── Executive Dashboard — 화이트 샘플 (8 KPI + Cloud3 + S3-5 + 업로드) ───
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    """대시보드 PPTX Slide 1 도형 의도 — 작은 KPI 9개 + 큰 박스 4개 + 하단 박스 2개."""
     return render_template('dashboard.html',
         active='dashboard',
-        kpi_top=MOCKUP_KPI_TOP,
-        kpi_mid=MOCKUP_KPI_MID,
-        aws_status=MOCKUP_AWS_STATUS_DETAIL,
-        gcp_status=MOCKUP_GCP_STATUS_DETAIL,
-        s3_box=MOCKUP_S3_INGESTION_BOX,
-        signup_box=MOCKUP_SIGNUP_BOX,
-        recent_uploads=MOCKUP_RECENT_UPLOADS,
+        kpi=MOCKUP_DASH_KPI,
+        cloud3=MOCKUP_DASH_CLOUD3,
+        s3_cards=MOCKUP_DASH_S3_5,
+        uploads=MOCKUP_DASH_RECENT_UPLOADS,
     )
 
 
-# ── Customer 360 — 검색 + 단일 결과 카드 (PPTX Slide 2) ───
+# ── Customer 360 — 화이트 샘플 (검색 + 단일 프로필 + 좌3/우4 박스) ───
 @app.route('/users')
 @login_required
 def users():
-    q = request.args.get('q', '').strip()
-    if not q:
-        return render_template('users.html',
-            active='customer',
-            q='',
-            customer=None,
-            recommend_history=[],
-            personalized=None,
-        )
-
-    # 검색: global_id 우선, 그 다음 이름/이메일
-    customer = None
-    if USE_MOCK:
-        customer = next((u for u in MOCK_USERS if u['global_id'] == q or q in u['name'] or q in u['email']), None)
-        if customer:
-            gid = customer['global_id']
-            scores            = MOCK_SCORES.get(gid)
-            recommend_history = MOCK_RECOMMEND_HISTORY.get(gid, [])
-            personalized      = MOCKUP_REDIS_PERSONALIZED
-        else:
-            scores = None; recommend_history = []; personalized = None
-    else:
-        try:
-            item = get_dynamo_table().get_item(Key={'global_id': q}).get('Item')
-            if item:
-                customer = {
-                    'global_id':  item['global_id'],
-                    'ls_user_id': '-',
-                    'name':       '-',
-                    'email':      '-',
-                    'grade':      item.get('dynamic_grade', '-'),
-                }
-                scores            = item
-                recommend_history = []  # Aurora 별도 쿼리 — 시연 보류
-                personalized      = MOCKUP_REDIS_PERSONALIZED
-            else:
-                scores = None; recommend_history = []; personalized = None
-        except Exception:
-            scores = None; recommend_history = []; personalized = None
-
+    q = request.args.get('q', '').strip() or MOCKUP_C360_DEFAULT_QUERY
     return render_template('users.html',
         active='customer',
         q=q,
-        customer=customer,
-        scores=scores,
-        recommend_history=recommend_history,
-        personalized=personalized,
+        profile=MOCKUP_C360_PROFILE,
+        status_rows=MOCKUP_C360_STATUS,
+        consent_badges=MOCKUP_C360_CONSENT_BADGES,
+        owned_badges=MOCKUP_C360_OWNED_BADGES,
+        topn=MOCKUP_C360_TOPN,
         crosssell=MOCKUP_CROSSSELL_LIST,
+        nba=MOCKUP_C360_NBA,
+        precision=MOCKUP_C360_PRECISION,
+        recent_recommend=MOCKUP_C360_RECENT_RECOMMEND,
+        recent_activity=MOCKUP_C360_RECENT_ACTIVITY,
     )
 
 
@@ -984,9 +969,8 @@ def user_detail(global_id):
         result = get_dynamo_table().get_item(Key={'global_id': global_id})
         scores = result.get('Item')
 
-        # ② 온프레미스 Lambda — 동의 현황 (개별 조회는 Lambda 경유 허용)
-        consent_data = _call_onprem('get_consent', global_id=global_id)
-        consents     = consent_data.get('consents', [])
+        # ② S3 동의 스냅샷 (consent_snapshot_aggregator 가 매일 KST 03:00 적재)
+        consents = _load_consent_from_s3(global_id).get('consents', [])
 
         # ③ Aurora — 추천 이력
         db = get_db()
@@ -1003,8 +987,8 @@ def user_detail(global_id):
         finally:
             db.close()
 
-        # ④ Private API — 제휴사 매핑
-        identities = _get_identities(global_id)
+        # ④ 온프레 Lambda — 계열사 매핑 (customer_identity_map)
+        identities = (_call_onprem('get_identity_map', global_id=global_id) or {}).get('identities', [])
 
         # 기본 유저 정보: Aurora users_ref 동기화 전까지 available 필드만 표시
         user = {
@@ -1050,24 +1034,26 @@ def ai():
             try:
                 with db.cursor() as cur:
                     cur.execute(
-                        'SELECT p.product_name AS product, p.category, '
+                        'SELECT p.product_name AS product, cat.category_code AS category, '
                         '       COUNT(*) AS recommended, '
-                        '       ROUND(SUM(r.clicked_flag = "Y") / COUNT(*) * 100, 1) AS ctr, '
-                        '       ROUND(SUM(r.purchased_flag = "Y") / COUNT(*) * 100, 1) AS cvr '
+                        '       ROUND(SUM(r.clicked_flag = "Y")   / NULLIF(COUNT(*),0) * 100, 1) AS ctr, '
+                        '       ROUND(SUM(r.purchased_flag = "Y") / NULLIF(SUM(r.clicked_flag="Y"),0) * 100, 1) AS cvr '
                         'FROM customer_recommend_history r '
-                        'JOIN product_master p ON r.product_id = p.product_id '
-                        'GROUP BY p.product_id, p.product_name, p.category '
+                        'JOIN product_master  p   ON r.product_id  = p.product_id '
+                        'JOIN category_master cat ON p.category_id = cat.category_id '
+                        'GROUP BY p.product_id, p.product_name, cat.category_code '
                         'ORDER BY recommended DESC LIMIT 10'
                     )
                     top10 = [dict(r, rank=i + 1) for i, r in enumerate(cur.fetchall())]
 
                     cur.execute(
-                        'SELECT p.category, '
-                        '       ROUND(SUM(r.clicked_flag = "Y")  / COUNT(*) * 100, 1) AS ctr, '
-                        '       ROUND(SUM(r.purchased_flag = "Y") / COUNT(*) * 100, 1) AS cvr '
+                        'SELECT cat.category_code AS category, '
+                        '       ROUND(SUM(r.clicked_flag = "Y")   / NULLIF(COUNT(*),0) * 100, 1) AS ctr, '
+                        '       ROUND(SUM(r.purchased_flag = "Y") / NULLIF(SUM(r.clicked_flag="Y"),0) * 100, 1) AS cvr '
                         'FROM customer_recommend_history r '
-                        'JOIN product_master p ON r.product_id = p.product_id '
-                        'GROUP BY p.category ORDER BY ctr DESC'
+                        'JOIN product_master  p   ON r.product_id  = p.product_id '
+                        'JOIN category_master cat ON p.category_id = cat.category_id '
+                        'GROUP BY cat.category_code ORDER BY ctr DESC'
                     )
                     by_category = list(cur.fetchall())
             finally:
@@ -1113,15 +1099,18 @@ def ai():
 
     return render_template('ai.html',
         active='ai',
+        # 화이트 샘플 전용
+        kpi4=MOCKUP_AI_KPI4,
+        trend_7d=recommend_trend,
         top10=top10,
-        by_category=by_category,
-        by_grade=by_grade,
-        score_dist=score_dist,
-        ai_kpi=ai_kpi,
-        vertex_ai=vertex_ai,
-        feature_importance=feature_importance,
-        age_model_ratio=MOCKUP_AGE_MODEL_RATIO,
-        recommend_trend=recommend_trend,
+        cat_donut=MOCKUP_AI_CAT_DONUT,
+        age_perf=MOCKUP_AI_AGE_PERF,
+        grade_dist=MOCKUP_AI_GRADE_DIST,
+        feature_dist=MOCKUP_AI_FEATURE_DIST,
+        rec_data=MOCKUP_AI_RECDATA,
+        insight=MOCKUP_AI_INSIGHT,
+        ddb_hist=MOCKUP_AI_DDB_HISTOGRAM,
+        pr_models=MOCKUP_AI_PR_MODELS,
     )
 
 
@@ -1139,7 +1128,7 @@ def api_admin_recommend_trend():
 @app.route('/api/admin/segment-performance')
 @login_required
 def api_admin_segment_performance():
-    """P3 r12. analytics_segment_performance 오늘자 — dim prefix 필터 가능 (?dim=gender)."""
+    """P3 r12. analytics_segment_daily 오늘자 — dim prefix 필터 가능 (?dim=gender)."""
     dim = request.args.get('dim')  # gender / age_band / region / income / asset
     prefix = f'{dim}#' if dim else None
     rows = _ddb_query_today(DDB_SEGMENT_TABLE, sk_prefix=prefix)
@@ -1149,14 +1138,15 @@ def api_admin_segment_performance():
 @app.route('/api/admin/demographic-summary')
 @login_required
 def api_admin_demographic_summary():
-    """P3 r13. analytics_demographic_summary 오늘자 — dim prefix 필터 가능."""
+    """P3 r13. analytics_demographic_daily 오늘자 — dim prefix 필터 가능."""
     dim = request.args.get('dim')
     prefix = f'{dim}#' if dim else None
     rows = _ddb_query_today(DDB_DEMOGRAPHIC_TABLE, sk_prefix=prefix)
     return jsonify(rows)
 
 
-@app.route('/api/admin/local-lab-status')
+@app.route('/api/local/status')                  # 설계서 V3 P4 r60 정합
+@app.route('/api/admin/local-lab-status')        # admin 내부 alias
 @login_required
 def api_admin_local_lab_status():
     """P4 r38~43, r60. 온프레 환경/서비스 종합 헬스 — Lambda onprem-query 'local_lab_status' 경유."""
@@ -1167,26 +1157,162 @@ def api_admin_local_lab_status():
     return jsonify(data or {'status': 'fail', 'environments': [], 'checks': {}, 'output': 'onprem lambda unavailable'})
 
 
-# ── 시트 정의 /api/* 라우트 — 기존 _ping_* / _stub_* 함수 JSON wrap ─────────────
+# ── 시트 정의 helper (설계서 V3 Backend 구현 명세 정합) ─────────────────────────
+
+def _stub_aurora_summary():
+    """P1 r29 — KPI 9 카드 list (시연↔운영 동일 구조).
+
+    응답 스키마: MOCKUP_DASH_KPI 와 동일 9-element list — 각 요소 `{label, value, sub, accent, is_status}`.
+    운영(USE_MOCK=false) 시 실 호출 결과로 value 만 덮어쓰고, 실패한 카드는 mockup 값 fallback.
+    """
+    if USE_MOCK:
+        return MOCKUP_DASH_KPI
+
+    # 운영 실 호출 — 부분 실패해도 카드 9개 구조 유지 (mockup baseline fallback)
+    cards = [dict(c) for c in MOCKUP_DASH_KPI]    # deep copy
+
+    # 1. 통합 고객 수 / 2. 플랫폼 가입자 / 3. 분석 대상 고객 (On-Prem)
+    for idx, action in [(0, 'count_master_customer'), (1, 'count_users'), (2, 'count_users_consented')]:
+        try:
+            c = _call_onprem(action).get('count')
+            if c is not None:
+                cards[idx]['value'] = f'{int(c):,}'
+        except Exception:
+            pass
+
+    # 4. 누적 추천 이력 / 5. 활동 로그 (Aurora COUNT)
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute('SELECT COUNT(*) AS n FROM customer_recommend_history')
+            cards[3]['value'] = f"{cur.fetchone()['n']:,}"
+            cur.execute('SELECT COUNT(*) AS n FROM customer_dashboard_log')
+            n = cur.fetchone()['n']
+            cards[4]['value'] = f'{n/1_000_000:.1f}M' if n >= 1_000_000 else f'{n:,}'
+    except Exception:
+        pass
+
+    # 6. Redis Cache 수 (DBSIZE) — admin 은 redis client 미보유 → CloudWatch 또는 mockup fallback
+    # 7. CTR / 8. CVR (Aurora 비율)
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT "
+                "  ROUND(SUM(clicked_flag='Y')   / NULLIF(COUNT(*),0)              * 100, 1) AS ctr, "
+                "  ROUND(SUM(purchased_flag='Y') / NULLIF(SUM(clicked_flag='Y'),0) * 100, 1) AS cvr "
+                "FROM customer_recommend_history"
+            )
+            r = cur.fetchone()
+            if r['ctr'] is not None: cards[6]['value'] = f"{r['ctr']}%"
+            if r['cvr'] is not None: cards[7]['value'] = f"{r['cvr']}%"
+    except Exception:
+        pass
+
+    # 9. AI 추천 상태 — DDB 최신 update_time (Vertex AI 배치 시각)
+    try:
+        items = get_dynamo_table().scan(
+            ProjectionExpression='update_time', Limit=1,
+        ).get('Items', [])
+        if items and items[0].get('update_time'):
+            cards[8]['sub'] = f"DynamoDB · 최근 갱신 {items[0]['update_time']}"
+    except Exception:
+        pass
+
+    return cards
+
+
+def _stub_aurora_history(global_id, limit=50):
+    """P2 r47 — Aurora customer_recommend_history WHERE global_id."""
+    if USE_MOCK:
+        return MOCK_RECOMMEND_HISTORY.get(global_id, [])
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT p.product_name, r.recommended_at, r.clicked_flag, r.purchased_flag "
+                "FROM customer_recommend_history r "
+                "JOIN product_master p ON r.product_id = p.product_id "
+                "WHERE r.global_id=%s ORDER BY r.recommended_at DESC LIMIT %s",
+                (global_id, limit),
+            )
+            return [{**r, 'recommended_at': str(r['recommended_at'])} for r in cur.fetchall()]
+    except Exception:
+        return []
+
+
+def _stub_aurora_activity(global_id, limit=50):
+    """P2 r48 — Aurora customer_dashboard_log WHERE global_id."""
+    if USE_MOCK:
+        return []
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT view_time, page_type, banner_click, product_click, click_product_id, session_id "
+                "FROM customer_dashboard_log WHERE global_id=%s "
+                "ORDER BY view_time DESC LIMIT %s",
+                (global_id, limit),
+            )
+            return [{**r, 'view_time': str(r['view_time'])} for r in cur.fetchall()]
+    except Exception:
+        return []
+
+
+def _stub_recommend_stats():
+    """P3 r27 — CTR/CVR/상품 TOP10/7일 추이/세그먼트별 성과 종합."""
+    return {
+        'kpi'              : MOCKUP_AI_KPI,
+        'trend_7day'       : (_aurora_recommend_trend_7day() if not USE_MOCK else MOCKUP_RECOMMEND_TREND),
+        'segment_today'    : (_ddb_query_today(DDB_SEGMENT_TABLE) if not USE_MOCK else []),
+        'prob_distribution': (_ddb_prob_distribution()           if not USE_MOCK else {}),
+    }
+
+
+def _stub_ai_summary():
+    """P3 r29 — AI 출력 분포 + 모델 평가 (Precision/Recall/Accuracy)."""
+    return {
+        'ai_kpi'        : MOCKUP_AI_KPI,
+        'vertex_metrics': (_stub_vertex_metrics()    if not USE_MOCK else {}) or {},
+        'score_dist'    : (_ddb_score_distribution() if not USE_MOCK else []),
+    }
+
+
+# ── 시트 정의 /api/* 라우트 — helper 호출 wrap ─────────────────────────────
 
 @app.route('/api/dashboard/summary')
 @login_required
 def api_dashboard_summary():
-    """P1 r29. KPI 종합 — 통합/플랫폼/분석 고객 수 + Aurora 추천 이력 + DDB 결과."""
+    """P1 r29 — _stub_aurora_summary() JSON wrap."""
+    return jsonify(_stub_aurora_summary())
+
+
+def _s3_status_cards():
+    """P1 r30 — S3 적재 5 카드 list (시연↔운영 동일 구조).
+
+    응답: MOCKUP_DASH_S3_5 와 동일 5-element list — `{icon, label, value, note}`.
+    """
     if USE_MOCK:
-        return jsonify({'kpi_top': MOCKUP_KPI_TOP, 'kpi_mid': MOCKUP_KPI_MID})
-    return jsonify({
-        'master_customer'  : _call_onprem('count_master_customer'),
-        'users_active'     : _call_onprem('count_users'),
-        'users_consented'  : _call_onprem('count_users_consented'),
-    })
+        return MOCKUP_DASH_S3_5
+
+    raw = _ping_s3_ingestion() or {}
+    last = raw.get('last_upload') or {}
+    iot  = raw.get('iot_count', 0)
+    size_gb = (raw.get('total_size_bytes', 0) / 1024 / 1024 / 1024) if raw.get('total_size_bytes') else 0
+
+    cards = [dict(c) for c in MOCKUP_DASH_S3_5]   # baseline copy
+    cards[0]['value'] = f"{raw.get('raw_bucket_files', 0):,}"
+    cards[1]['value'] = f"{raw.get('today_ingested', 0):,}"
+    cards[2]['value'] = f"{iot:,}"
+    if size_gb:
+        cards[3]['value'] = f"{size_gb:.1f} GB"
+    if last.get('time'):
+        cards[4]['value'] = last['time']
+        cards[4]['note']  = last.get('file', cards[4]['note'])
+    return cards
 
 
 @app.route('/api/s3/status')
 @login_required
 def api_s3_status():
-    """P1 r30. S3 적재 현황 — boto3 list_buckets + list_objects."""
-    return jsonify(_ping_s3_ingestion() if not USE_MOCK else MOCKUP_S3_INGESTION_BOX)
+    """P1 r30. S3 적재 현황 — 5 카드 list 응답 (시연↔운영 통일)."""
+    return jsonify(_s3_status_cards())
 
 
 @app.route('/api/cloud/status')
@@ -1198,13 +1324,54 @@ def api_cloud_status():
     return jsonify({'aws': _ping_cloud_status(), 'gcp': _stub_gcp_status() or MOCKUP_GCP_STATUS_DETAIL})
 
 
+def _profile_full_mock(global_id):
+    """P2 r44 시연 응답 — 운영 `_call_onprem('get_all')` 와 동일 구조 (시연↔운영 통일).
+
+    구조: {global_id, customer: {customer_status, vip_grade, first_created_dt,
+                                  identities: [...], profile: {lifesync_score, health_score, ...}},
+           consents: [...]}
+    """
+    user  = next((u for u in MOCK_USERS if u.get('global_id') == global_id), None) or {}
+    score = MOCK_SCORES.get(global_id, {}) or {}
+    return {
+        'global_id': global_id,
+        'customer': {
+            'customer_status':  'ACTIVE',
+            'vip_grade':        user.get('grade', 'BASIC'),
+            'customer_type':    'INDIVIDUAL',
+            'first_created_dt': '2023-01-15T10:00:00',
+            'last_updated_dt':  score.get('update_time', '2026-05-15T14:25:00'),
+            'identities':       MOCK_IDENTITIES.get(global_id, []),
+            'profile': {
+                'lifesync_score': float(score.get('dynamic_score', 0) or 0),
+                'health_score':   float(score.get('health_score', 0)   or 0),
+                'finance_score':  float(score.get('fin_score', 0)      or 0),
+                'asset_score':    75.0,
+                'risk_score':     12.0,
+                'last_calc_dt':   score.get('update_time', ''),
+            },
+        },
+        'consents': MOCK_CONSENTS.get(global_id, []),
+    }
+
+
 @app.route('/api/customer/profile/<global_id>')
 @login_required
 def api_customer_profile(global_id):
-    """P2 r44. customer_pii_secure + customer_360_profile + master_customer + users."""
+    """P2 r44. customer_pii_secure + customer_360_profile + master_customer + users + consent JOIN.
+
+    응답 스키마: {global_id, customer: {...}, consents: [...]} — 시연↔운영 동일.
+    운영: customer 는 PrivateAPI `get_profile` (master + identity + 360_profile), consents 는 S3 스냅샷.
+    """
     if USE_MOCK:
-        return jsonify(MOCK_USERS.get(global_id, {}))
-    return jsonify(_call_onprem('get_all', global_id=global_id))
+        return jsonify(_profile_full_mock(global_id))
+    customer = _call_onprem('get_profile', global_id=global_id) or {}
+    consents = _load_consent_from_s3(global_id).get('consents', [])
+    return jsonify({
+        'global_id': global_id,
+        'customer':  customer,
+        'consents':  consents,
+    })
 
 
 @app.route('/api/customer/ai-result/<global_id>')
@@ -1230,58 +1397,29 @@ def api_customer_recommend(global_id):
 @app.route('/api/customer/history/<global_id>')
 @login_required
 def api_customer_history(global_id):
-    """P2 r47. Aurora customer_recommend_history."""
-    if USE_MOCK:
-        return jsonify(MOCK_RECOMMEND_HISTORY.get(global_id, []))
-    try:
-        with get_db() as db, db.cursor() as cur:
-            cur.execute(
-                "SELECT p.product_name, r.recommended_at, r.clicked_flag, r.purchased_flag "
-                "FROM customer_recommend_history r "
-                "JOIN product_master p ON r.product_id = p.product_id "
-                "WHERE r.global_id=%s ORDER BY r.recommended_at DESC LIMIT 50",
-                (global_id,),
-            )
-            return jsonify([{**r, 'recommended_at': str(r['recommended_at'])} for r in cur.fetchall()])
-    except Exception:
-        return jsonify([])
+    """P2 r47 — _stub_aurora_history() JSON wrap."""
+    return jsonify(_stub_aurora_history(global_id))
 
 
 @app.route('/api/customer/activity/<global_id>')
 @login_required
 def api_customer_activity(global_id):
-    """P2 r48. Aurora customer_dashboard_log."""
-    if USE_MOCK:
-        return jsonify([])
-    try:
-        with get_db() as db, db.cursor() as cur:
-            cur.execute(
-                "SELECT view_time, page_path, action_type "
-                "FROM customer_dashboard_log WHERE global_id=%s "
-                "ORDER BY view_time DESC LIMIT 50",
-                (global_id,),
-            )
-            return jsonify([{**r, 'view_time': str(r['view_time'])} for r in cur.fetchall()])
-    except Exception:
-        return jsonify([])
+    """P2 r48 — _stub_aurora_activity() JSON wrap."""
+    return jsonify(_stub_aurora_activity(global_id))
 
 
 @app.route('/api/ai/summary')
 @login_required
 def api_ai_summary():
-    """P3. AI KPI 종합 (DDB 등급 분포 + Aurora CTR/CVR + Vertex AI metric)."""
-    return jsonify({
-        'ai_kpi'        : MOCKUP_AI_KPI,
-        'vertex_metrics': (_stub_vertex_metrics() if not USE_MOCK else {}) or {},
-        'score_dist'    : (_ddb_score_distribution() if not USE_MOCK else []),
-    })
+    """P3 r29 — _stub_ai_summary() JSON wrap."""
+    return jsonify(_stub_ai_summary())
 
 
 @app.route('/api/ai/recommend-stats')
 @login_required
 def api_ai_recommend_stats():
-    """P3. 추천 통계 — vip/signup/rec prob 평균 + 히스토그램."""
-    return jsonify(_ddb_prob_distribution() if not USE_MOCK else {})
+    """P3 r27 — _stub_recommend_stats() JSON wrap."""
+    return jsonify(_stub_recommend_stats())
 
 
 @app.route('/api/bigquery/analytics')
@@ -1377,13 +1515,13 @@ def api_admin_applications():
             )
             total = cur.fetchone()['cnt']
 
+            # Service-DB v3 — customer_product_application 9컬럼 슬림 스키마
             cur.execute(
                 "SELECT a.application_id, a.global_id, a.ls_user_id, "
-                "       a.product_code, p.product_name, "
+                "       p.product_code, p.product_name, "
                 "       c.company_name, cat.category_name, "
-                "       a.applicant_name, a.applicant_phone, a.applicant_email, "
-                "       a.apply_amount, a.contact_time, a.memo, "
-                "       a.agree_marketing, a.status, a.created_at, a.updated_at "
+                "       a.status, a.reviewer_id, a.reviewed_at, "
+                "       a.created_at, a.updated_at "
                 "FROM customer_product_application a "
                 "LEFT JOIN product_master  p   ON a.product_id  = p.product_id "
                 "LEFT JOIN company_master  c   ON p.company_id  = c.company_id "
@@ -1395,8 +1533,9 @@ def api_admin_applications():
             rows = []
             for r in cur.fetchall():
                 rows.append({**r,
-                    'created_at': str(r['created_at']) if r.get('created_at') else None,
-                    'updated_at': str(r['updated_at']) if r.get('updated_at') else None,
+                    'reviewed_at': str(r['reviewed_at']) if r.get('reviewed_at') else None,
+                    'created_at':  str(r['created_at'])  if r.get('created_at')  else None,
+                    'updated_at':  str(r['updated_at'])  if r.get('updated_at')  else None,
                 })
     except Exception as e:
         return jsonify({'error': f'조회 실패: {str(e)}'}), 500
@@ -1438,18 +1577,15 @@ def ops():
 
     return render_template('ops.html',
         active='ops',
-        cloud_status=cloud_status,
-        domain_flow=domain_flow,
-        lambda_metrics=lambda_metrics,
-        glue_last=glue_last,
-        next_batch=next_batch,
-        recent_errors=recent_errors,
-        tgw=tgw,
-        vpn=vpn,
-        vpc_peering=vpc_peering,
-        wearable_realtime=wearable_realtime,
-        affiliate_health=affiliate_health,
-        backend_services=backend_services,
+        topology=MOCKUP_NET_TOPOLOGY,
+        net_platform=MOCKUP_NET_AWS_PLATFORM,
+        net_data=MOCKUP_NET_AWS_DATA,
+        net_groupvm=MOCKUP_NET_AWS_GROUPVM,
+        net_conn=MOCKUP_NET_AWS_CONNECTIVITY,
+        net_gcp=MOCKUP_NET_GCP,
+        net_onprem=MOCKUP_NET_ONPREM,
+        wearable=MOCKUP_NET_WEARABLE,
+        endpoints=MOCKUP_NET_API_ENDPOINTS,
     )
 
 

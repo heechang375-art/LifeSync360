@@ -4,8 +4,8 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "256",
   "memory": "512",
-  "executionRoleArn": "arn:aws:iam::732264765472:role/lifesync-dev-EcsTaskExecutionRole",
-  "taskRoleArn": "arn:aws:iam::732264765472:role/lifesync-dev-EcsTaskRole",
+  "executionRoleArn": "arn:aws:iam::354493396671:role/lifesync-dev-EcsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::354493396671:role/lifesync-dev-EcsTaskRole",
   "containerDefinitions": [
     {
       "name": "admin",
@@ -20,35 +20,35 @@
         { "name": "AWS_REGION",          "value": "ap-northeast-2" },
         { "name": "DB_NAME",             "value": "lifesync360" },
         { "name": "DYNAMO_TABLE",          "value": "lifesync_customer_result" },
-        { "name": "DDB_SEGMENT_TABLE",     "value": "analytics_segment_performance" },
-        { "name": "DDB_DEMOGRAPHIC_TABLE", "value": "analytics_demographic_summary" },
+        { "name": "DDB_SEGMENT_TABLE",     "value": "analytics_segment_daily" },
+        { "name": "DDB_DEMOGRAPHIC_TABLE", "value": "analytics_demographic_daily" },
         { "name": "USE_MOCK",              "value": "false" },
         { "name": "ONPREM_QUERY_LAMBDA",   "value": "lifesync-onprem-customer-query" }
       ],
       "secrets": [
         {
           "name": "AURORA_HOST",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:732264765472:secret:lifesync/aurora:host::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/aurora:host::"
         },
         {
           "name": "DB_USER",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:732264765472:secret:lifesync/aurora:user::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/aurora:user::"
         },
         {
           "name": "DB_PASS",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:732264765472:secret:lifesync/aurora:password::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/aurora:password::"
         },
         {
           "name": "SECRET_KEY",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:732264765472:secret:lifesync/admin:secret_key::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/admin:secret_key::"
         },
         {
           "name": "ADMIN_USER",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:732264765472:secret:lifesync/admin:username::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/admin:username::"
         },
         {
           "name": "ADMIN_PASSWORD",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:732264765472:secret:lifesync/admin:password::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/admin:password::"
         }
       ],
       "logConfiguration": {

@@ -1,191 +1,97 @@
 {% extends 'base.html' %}
-{% block title %}운영 모니터링 – Admin{% endblock %}
-{% block page_title %}운영 모니터링 · 멀티클라우드 인프라 + 데이터 흐름{% endblock %}
+{% block title %}Network & Connectivity — Admin{% endblock %}
+
+{% macro vpc_card(c) -%}
+<div class="card">
+    <div class="card-title" style="display:flex; align-items:center; justify-content:space-between;">
+        <span>📦 {{ c.title }}</span>
+        {% if c.badge %}<span class="pill" style="background:{{ c.badge_bg }}; color:{{ c.badge_color }};">{{ c.badge }}</span>{% endif %}
+    </div>
+    {% for it in c.rows %}
+    <div class="vpc-item">
+        <div>
+            <div class="vpc-item-name">{{ it.name }}</div>
+            <div class="vpc-item-sub">{{ it.sub }}</div>
+        </div>
+        {% if it.state %}
+        <span class="vpc-item-state" style="background:#dcfce7; color:{{ it.state_color }};">● {{ it.state }}</span>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{%- endmacro %}
 
 {% block content %}
-<div class="detail-content">
+<div class="page-title">Network & Connectivity</div>
+<div class="page-sub">멀티 클라우드 + 온프레미스 네트워크 상태 + AWS · GCP · On-Prem</div>
 
-    <!-- 상단 네트워크 6 카드 (PPTX slide4 y=0 라벨들 — 카드로 확장) -->
-    <div class="detail-section">
-        <div style="display:grid; grid-template-columns: repeat(6, 1fr); gap:6px;">
-            <div class="card" style="padding:8px 10px; border-left:3px solid #6366f1;">
-                <div style="font-size:11px; color:#64748b;">Transit Gateway</div>
-                <div style="font-size:18px; font-weight:700; color:#16a34a; margin-top:2px;">● UP</div>
-                <div style="font-size:10px; color:#94a3b8; font-family:monospace;">{{ tgw.id[:18] }}…</div>
-                <div style="font-size:10px; color:#475569; margin-top:2px;">{{ tgw.attachments }} attachments</div>
+<!-- 인프라 토폴로지 -->
+<section class="section">
+    <div class="section-title">🌐 인프라 토폴로지</div>
+    <div class="topo">
+        <div class="topo-group">
+            {% for a in topology.aws %}
+            <div class="topo-box" style="background:{{ a.bg }}; border-color:{{ a.border }};">
+                <div class="topo-title">{{ a.name }} <span class="dot"></span></div>
+                {% for line in a.lines %}<div>{{ line }}</div>{% endfor %}
             </div>
-            <div class="card" style="padding:8px 10px; border-left:3px solid #6366f1;">
-                <div style="font-size:11px; color:#64748b;">Routing 상태</div>
-                <div style="font-size:18px; font-weight:700; color:#16a34a; margin-top:2px;">● UP</div>
-                <div style="font-size:10px; color:#94a3b8;">TGW Route Tables</div>
-                <div style="font-size:10px; color:#475569; margin-top:2px;">{{ tgw.attachments }} routes</div>
-            </div>
-            <div class="card" style="padding:8px 10px; border-left:3px solid #16a34a;">
-                <div style="font-size:11px; color:#64748b;">Site-to-Site VPN</div>
-                <div style="font-size:18px; font-weight:700; color:#16a34a; margin-top:2px;">● UP</div>
-                <div style="font-size:10px; color:#94a3b8;">AWS ↔ GCP / On-prem</div>
-                <div style="font-size:10px; color:#475569; margin-top:2px;">strongSwan IPsec</div>
-            </div>
-            <div class="card" style="padding:8px 10px; border-left:3px solid #16a34a;">
-                <div style="font-size:11px; color:#64748b;">VPN Tunnel 상태</div>
-                <div style="font-size:18px; font-weight:700; color:#16a34a; margin-top:2px;">{{ vpn.tunnels | length }}/{{ vpn.tunnels | length }} UP</div>
-                <div style="font-size:10px; color:#94a3b8;">TunnelState (CW)</div>
-                <div style="font-size:10px; color:#475569; margin-top:2px;">전체 ACTIVE</div>
-            </div>
-            <div class="card" style="padding:8px 10px; border-left:3px solid #3b82f6;">
-                <div style="font-size:11px; color:#64748b;">VPC 연결</div>
-                <div style="font-size:18px; font-weight:700; color:#16a34a; margin-top:2px;">{{ vpc_peering | length }} active</div>
-                <div style="font-size:10px; color:#94a3b8;">Peering / TGW Att</div>
-                <div style="font-size:10px; color:#475569; margin-top:2px;">Service ↔ Data ↔ Group</div>
-            </div>
-            <div class="card" style="padding:8px 10px; border-left:3px solid #f59e0b;">
-                <div style="font-size:11px; color:#64748b;">Traffic</div>
-                <div style="font-size:18px; font-weight:700; color:#f59e0b; margin-top:2px;">{{ vpn.tunnels[0].traffic_in_mbps if vpn.tunnels else 0 }} Mbps</div>
-                <div style="font-size:10px; color:#94a3b8;">VPC Flow Logs</div>
-                <div style="font-size:10px; color:#475569; margin-top:2px;">In · 실시간</div>
-            </div>
+            {% endfor %}
+        </div>
+        <span class="topo-arrow">⟷</span>
+        <div class="topo-box" style="background:{{ topology.gcp.bg }}; border-color:{{ topology.gcp.border }};">
+            <div class="topo-title">{{ topology.gcp.name }} <span class="dot"></span></div>
+            {% for line in topology.gcp.lines %}<div>{{ line }}</div>{% endfor %}
+        </div>
+        <span class="topo-arrow">⟷</span>
+        <div class="topo-box" style="background:{{ topology.onprem.bg }}; border-color:{{ topology.onprem.border }};">
+            <div class="topo-title">{{ topology.onprem.name }} <span class="dot"></span></div>
+            {% for line in topology.onprem.lines %}<div>{{ line }}</div>{% endfor %}
         </div>
     </div>
+</section>
 
-    <!-- 메인 row — 좌 column (백엔드 서비스) + 우 column (계열사 7개) — PPTX slide4 y=2 -->
-    <div class="detail-section">
-        <div style="display:grid; grid-template-columns: 0.4fr 1fr; gap:8px;">
-
-            <!-- 좌측 column — 백엔드 서비스 6 (8.7 x 16.5cm 박스 안 세로 나열) -->
-            <div class="card" style="border-top:3px solid #16a34a;">
-                <div class="card-title" style="color:#16a34a;">백엔드 서비스</div>
-                {% for s in backend_services %}
-                <div style="padding:8px 0; border-bottom:1px solid #f1f5f9;">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-size:12px; font-weight:600;">{{ s.service }}</span>
-                        <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; color:#fff; background:{% if s.state == 'UP' %}#16a34a{% else %}#dc2626{% endif %};">● {{ s.state }}</span>
-                    </div>
-                    <div style="font-size:11px; color:#475569; margin-top:2px;">{{ s.note }}</div>
-                </div>
-                {% endfor %}
-            </div>
-
-            <!-- 우측 column — 계열사 7개 (PPTX 1행 3개 + 2행 4개) -->
-            <div class="card" style="border-top:3px solid #f97316;">
-                <div class="card-title" style="color:#f97316;">▶ AWS 상태 · 계열사 7개 (CPU / Memory / API 연결)</div>
-
-                <!-- 1행 3개 (보험·인터넷보험·은행) -->
-                <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; margin-bottom:8px;">
-                    {% for a in affiliate_health[:3] %}
-                    <div style="background:#fff; border:1px solid #e2e8f0; border-left:3px solid {% if a.api_state == 'UP' %}#16a34a{% elif a.api_state == 'SLOW' %}#f59e0b{% else %}#dc2626{% endif %}; border-radius:6px; padding:8px 10px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-size:13px; font-weight:700;">{{ a.affiliate }}</span>
-                            <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; color:#fff; background:{% if a.api_state == 'UP' %}#16a34a{% elif a.api_state == 'SLOW' %}#f59e0b{% else %}#dc2626{% endif %};">{{ a.api_state }}</span>
-                        </div>
-                        <div style="font-size:11px; color:#475569; margin-top:4px;">CPU <strong>{{ a.cpu_pct }}%</strong> · Mem <strong>{{ a.mem_pct }}%</strong></div>
-                        <div style="font-size:10px; color:#94a3b8; margin-top:2px; font-family:monospace;">ping {{ a.last_ping }}</div>
-                    </div>
-                    {% endfor %}
-                </div>
-
-                <!-- 2행 4개 (증권·카드·헬스케어·병원) -->
-                <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px;">
-                    {% for a in affiliate_health[3:] %}
-                    <div style="background:#fff; border:1px solid #e2e8f0; border-left:3px solid {% if a.api_state == 'UP' %}#16a34a{% elif a.api_state == 'SLOW' %}#f59e0b{% else %}#dc2626{% endif %}; border-radius:6px; padding:8px 10px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-size:13px; font-weight:700;">{{ a.affiliate }}</span>
-                            <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; color:#fff; background:{% if a.api_state == 'UP' %}#16a34a{% elif a.api_state == 'SLOW' %}#f59e0b{% else %}#dc2626{% endif %};">{{ a.api_state }}</span>
-                        </div>
-                        <div style="font-size:11px; color:#475569; margin-top:4px;">CPU <strong>{{ a.cpu_pct }}%</strong> · Mem <strong>{{ a.mem_pct }}%</strong></div>
-                        <div style="font-size:10px; color:#94a3b8; margin-top:2px; font-family:monospace;">ping {{ a.last_ping }}</div>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-
-        </div>
+<!-- AWS 3 VPC -->
+<section class="section" style="background:transparent; border:none; padding:0;">
+    <div class="grid grid-3">
+        {{ vpc_card(net_platform) }}
+        {{ vpc_card(net_data) }}
+        {{ vpc_card(net_groupvm) }}
     </div>
+</section>
 
-    <!-- 하단 — Wearable VM 실시간 가로 박스 (PPTX slide4 y=13.6, 21.7×4.9cm) -->
-    <div class="detail-section">
-        <div class="card" style="border-top:3px solid #14b8a6;">
-            <div class="card-title" style="color:#14b8a6;">Wearable VM · 실시간 메트릭 (CloudWatch custom)</div>
-            <div style="display:grid; grid-template-columns: repeat(6, 1fr); gap:8px;">
-                {% for w in wearable_realtime %}
-                <div style="background:#fff; border:1px solid #e2e8f0; border-left:3px solid {% if w.state == 'OK' %}#16a34a{% elif w.state == 'WARN' %}#f59e0b{% else %}#dc2626{% endif %}; border-radius:6px; padding:8px 10px; text-align:center;">
-                    <div style="font-size:11px; color:#64748b;">{{ w.metric }}</div>
-                    <div style="font-size:18px; font-weight:700; color:#1e293b; margin-top:4px;" class="mono">{{ w.current }}</div>
-                    <div style="font-size:10px; color:#94a3b8; margin-top:2px;">{{ w.range }}</div>
-                    <div style="margin-top:4px;">
-                        <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; color:#fff; background:{% if w.state == 'OK' %}#16a34a{% elif w.state == 'WARN' %}#f59e0b{% else %}#dc2626{% endif %};">● {{ w.state }}</span>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
+<!-- AWS Connectivity / GCP / On-Prem -->
+<section class="section" style="background:transparent; border:none; padding:0; margin-top:10px;">
+    <div class="grid grid-3">
+        {{ vpc_card(net_conn) }}
+        {{ vpc_card(net_gcp) }}
+        {{ vpc_card(net_onprem) }}
     </div>
+</section>
 
-    <!-- 보조 — 도메인 데이터 흐름 + Lambda 호출률 + Glue ETL -->
-    <div class="detail-section">
-        <div style="display:grid; grid-template-columns: 1.2fr 1fr 1fr; gap:8px;">
-            <div class="card">
-                <div class="card-title">도메인별 데이터 흐름</div>
-                <div class="table-wrap">
-                    <table style="font-size:11px;">
-                        <thead><tr><th>도메인</th><th>상태</th><th>마지막 적재</th><th>오늘 파일</th></tr></thead>
-                        <tbody>
-                            {% for d in domain_flow %}
-                            <tr>
-                                <td><strong>{{ d.label }}</strong></td>
-                                <td><span style="color:{% if d.state == 'OK' %}#16a34a{% elif d.state == 'WARN' %}#f59e0b{% else %}#dc2626{% endif %}; font-weight:700;">{{ d.state }}</span></td>
-                                <td class="mono">{{ d.last_upload_at }}</td>
-                                <td>{{ '{:,}'.format(d.files_today) }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-title">Lambda 호출률 (1h)</div>
-                <div class="table-wrap">
-                    <table style="font-size:11px;">
-                        <thead><tr><th>함수</th><th>호출</th><th>err</th></tr></thead>
-                        <tbody>
-                            {% for l in lambda_metrics %}
-                            <tr>
-                                <td class="mono">{{ l.fn[:24] }}</td>
-                                <td>{{ '{:,}'.format(l.invocations_1h) }}</td>
-                                <td style="color:{% if l.errors_1h %}#dc2626{% else %}#16a34a{% endif %}; font-weight:700;">{{ l.errors_1h }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-title">Glue / 배치</div>
-                {% if glue_last %}
-                <div style="font-size:11px; margin-bottom:6px;">
-                    <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">Job</span><span class="mono" style="font-size:10px;">{{ glue_last.job_name[:24] }}</span></div>
-                    <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">상태</span><strong style="color:{% if glue_last.state == 'SUCCEEDED' %}#16a34a{% else %}#f59e0b{% endif %};">{{ glue_last.state }}</strong></div>
-                    <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #f1f5f9;"><span style="color:#64748b;">완료</span><span class="mono" style="font-size:10px;">{{ glue_last.completed_at[:16] }}</span></div>
-                </div>
-                {% endif %}
-                {% if next_batch %}
-                <div style="font-size:11px; padding-top:4px; border-top:1px solid #e2e8f0;">
-                    <div style="color:#64748b;">다음 실행: <strong>{{ next_batch.next_scheduled_at }}</strong></div>
-                </div>
-                {% endif %}
-                {% if recent_errors %}
-                <div style="font-size:11px; padding-top:6px; margin-top:6px; border-top:1px solid #e2e8f0;">
-                    <div style="color:#64748b; font-weight:600; margin-bottom:4px;">최근 오류:</div>
-                    {% for e in recent_errors[:2] %}
-                    <div style="font-size:10px; padding:2px 0;">
-                        <span class="mono">{{ e.time }}</span> ·
-                        <strong style="color:{% if e.severity == 'ERROR' %}#dc2626{% else %}#f59e0b{% endif %};">{{ e.severity }}</strong>
-                        {{ e.message[:30] }}
-                    </div>
-                    {% endfor %}
-                </div>
-                {% endif %}
-            </div>
+<!-- WEARABLE 실시간 데이터 (6 KPI — 설계서 V5) -->
+<section class="section">
+    <div class="section-title">❤ WEARABLE 실시간 데이터 <span class="pipe">|</span> <span class="sub">(KINESIS)</span></div>
+    <div class="grid grid-6">
+        {% for w in wearable %}
+        <div class="s3-card">
+            <div class="s3-icon">{{ w.icon }}</div>
+            <div class="s3-label">{{ w.label }}</div>
+            <div class="s3-value">{{ w.value }}</div>
+            <div class="s3-note">{{ w.sub }}</div>
         </div>
+        {% endfor %}
     </div>
-</div>
+</section>
+
+<!-- NETWORK API 엔드포인트 -->
+<section class="section">
+    <div class="section-title">🛰 NETWORK API 엔드포인트</div>
+    {% for e in endpoints %}
+    <div class="endpoint-row">
+        <span class="endpoint-method">{{ e.method }}</span>
+        <span class="endpoint-name">{{ e.name }}</span>
+        <span class="endpoint-desc">{{ e.desc }}</span>
+    </div>
+    {% endfor %}
+</section>
 {% endblock %}

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8"><title>ERD</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI','Noto Sans KR',sans-serif;}
+body{background:#fff;padding:40px;}
+.canvas{position:relative;width:1500px;}
+
+.entity{position:absolute;border:2.5px solid #1e3a8a;border-radius:5px;background:#fff;font-size:13px;width:240px;}
+.entity .title{background:#1e3a8a;color:#fff;font-weight:800;font-size:14.5px;padding:10px 10px;text-align:center;letter-spacing:.5px;}
+.entity .row{padding:6px 10px;display:flex;gap:7px;border-top:1.5px solid #cbd5e1;}
+.entity .row:first-of-type{border-top:0;}
+.entity .col-key{width:28px;font-weight:800;color:#1e40af;font-size:12.5px;flex-shrink:0;}
+.entity .col-name{flex:1;color:#0f172a;font-size:12.5px;line-height:1.4;font-weight:500;}
+.entity .pk{color:#dc2626;}
+.entity .fk{color:#2563eb;}
+
+.e-users{border-color:#dc2626;} .e-users .title{background:#dc2626;}
+.e-master{border-color:#1e3a8a;} .e-master .title{background:#1e3a8a;}
+.e-map{border-color:#dc2626;} .e-map .title{background:#dc2626;}
+.e-pii{border-color:#ea580c;} .e-pii .title{background:#ea580c;}
+.e-profile{border-color:#15803d;} .e-profile .title{background:#15803d;}
+.e-consent{border-color:#7e22ce;} .e-consent .title{background:#7e22ce;}
+.e-audit{border-color:#0e7490;} .e-audit .title{background:#0e7490;}
+
+.cardinality{position:absolute;font-size:13px;color:#1e293b;background:#fff;padding:2px 7px;font-weight:800;border:1.5px solid #94a3b8;border-radius:3px;}
+</style></head><body>
+<div class="canvas" style="height:900px;">
+
+  <!-- USERS (top-left) -->
+  <div class="entity e-users" style="left:60px; top:0;">
+    <div class="title">USERS</div>
+    <div class="row"><span class="col-key pk">PK</span><span class="col-name">user_id</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">ls_user_id (UNIQUE)</span></div>
+    <div class="row"><span class="col-key fk">FK</span><span class="col-name">global_id (FK)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">login_email (UNIQUE)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">password_hash</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">mobile</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">user_status (ACTIVE/LOCK)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">consent_completed (Y/N)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">created_dt</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">last_login_dt</span></div>
+  </div>
+
+  <!-- MASTER_CUSTOMER (top-center) — schema_reference 정합 -->
+  <div class="entity e-master" style="left:420px; top:0;">
+    <div class="title">MASTER_CUSTOMER</div>
+    <div class="row"><span class="col-key pk">PK</span><span class="col-name">global_id</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">customer_status<br>(ACTIVE/DORMANT/WITHDRAWN)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">vip_grade (NORMAL/SILVER/GOLD)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">customer_type<br>(INDIVIDUAL/CORPORATE)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">first_created_dt</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">last_updated_dt</span></div>
+  </div>
+
+  <div class="cardinality" style="left:335px; top:40px;">1:1</div>
+
+  <!-- 5 children — schema_reference 정합 PK 모두 reference 기준 -->
+  <!-- CUSTOMER_IDENTITY_MAP (id PK) -->
+  <div class="entity e-map" style="left:30px; top:430px;">
+    <div class="title">CUSTOMER_IDENTITY_MAP</div>
+    <div class="row"><span class="col-key pk">PK</span><span class="col-name">id (BIGINT AUTO_INC)</span></div>
+    <div class="row"><span class="col-key fk">FK</span><span class="col-name">global_id (FK)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">domain (BANK/CARD/SEC/<br>INS/ONINS/HLT/HOS/WBL)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">source_customer_id</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">match_type (EXACT/FUZZY)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">active_flag (Y/N)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">created_dt</span></div>
+  </div>
+
+  <!-- CUSTOMER_PII_SECURE (pii_token PK) -->
+  <div class="entity e-pii" style="left:300px; top:430px;">
+    <div class="title">CUSTOMER_PII_SECURE</div>
+    <div class="row"><span class="col-key pk">PK</span><span class="col-name">pii_token<br>(PII-SHA256[:16])</span></div>
+    <div class="row"><span class="col-key fk">FK</span><span class="col-name">global_id (FK)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">customer_name_enc</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">rrn_enc</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">mobile_enc</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">email_enc</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">address_enc</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">created_dt</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">updated_dt</span></div>
+  </div>
+
+  <!-- CUSTOMER_360_PROFILE — score 컬럼 reference 순서 -->
+  <div class="entity e-profile" style="left:570px; top:430px;">
+    <div class="title">CUSTOMER_360_PROFILE</div>
+    <div class="row"><span class="col-key pk">PK</span><span class="col-name">global_id</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">gender (M/F)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">age_band (20s/30s/.../70s)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">region (SEOUL/GYEONGGI/...)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">income_grade (LOW/MID/HIGH)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">asset_grade (LOW/MID/HIGH)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">wearable_flag (Y/N)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">risk_score (0~100)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">health_score (0~100)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">finance_score (0~100)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">asset_score (0~100)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">lifesync_score (0~100)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">last_calc_dt</span></div>
+  </div>
+
+  <!-- CONSENT (id PK) -->
+  <div class="entity e-consent" style="left:840px; top:430px;">
+    <div class="title">CONSENT</div>
+    <div class="row"><span class="col-key pk">PK</span><span class="col-name">id (BIGINT AUTO_INC)</span></div>
+    <div class="row"><span class="col-key fk">FK</span><span class="col-name">global_id (FK)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">domain (BANK/CARD/SEC/<br>INS/ONINS/HLT/HOS/WBL)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">consent_flag (Y/N)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">consent_version (v1.0)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">revoke_dt (NULL OK)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">consent_dt (NULL OK)</span></div>
+  </div>
+
+  <!-- MATCHING_AUDIT_LOG (audit_id PK) — schema_reference 정합 -->
+  <div class="entity e-audit" style="left:1110px; top:430px;">
+    <div class="title">MATCHING_AUDIT_LOG</div>
+    <div class="row"><span class="col-key pk">PK</span><span class="col-name">audit_id (BIGINT AUTO_INC)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">request_id (REQ-...)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">ls_user_id</span></div>
+    <div class="row"><span class="col-key fk">FK</span><span class="col-name">matched_global_id (FK)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">match_rule (EXACT_RRN/...)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">match_score (0~100)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">result (MATCH/NEW_CREATE)</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">request_dt</span></div>
+    <div class="row"><span class="col-key">　</span><span class="col-name">remarks (NULL OK)</span></div>
+  </div>
+
+  <!-- 관계선 SVG — 좌표 재계산 -->
+  <svg style="position:absolute; top:0; left:0; width:1500px; height:900px; pointer-events:none;">
+    <!-- USERS (60+240/2=180, 0~bottom) → MASTER (420, top) -->
+    <line x1="300" y1="40" x2="420" y2="40" stroke="#475569" stroke-width="2.5"/>
+    <!-- MASTER center (540) → vertical down to bus (370) -->
+    <line x1="540" y1="240" x2="540" y2="370" stroke="#475569" stroke-width="2.5"/>
+    <!-- horizontal bus (370) connecting 5 child centers -->
+    <line x1="150" y1="370" x2="1230" y2="370" stroke="#475569" stroke-width="2.5"/>
+    <!-- vertical drops to each child entity (centered) -->
+    <line x1="150"  y1="370" x2="150"  y2="430" stroke="#475569" stroke-width="2.5"/>
+    <line x1="420"  y1="370" x2="420"  y2="430" stroke="#475569" stroke-width="2.5"/>
+    <line x1="690"  y1="370" x2="690"  y2="430" stroke="#475569" stroke-width="2.5"/>
+    <line x1="960"  y1="370" x2="960"  y2="430" stroke="#475569" stroke-width="2.5"/>
+    <line x1="1230" y1="370" x2="1230" y2="430" stroke="#475569" stroke-width="2.5"/>
+  </svg>
+
+  <div class="cardinality" style="left:140px;  top:390px;">1:N</div>
+  <div class="cardinality" style="left:410px;  top:390px;">1:N</div>
+  <div class="cardinality" style="left:680px;  top:390px;">1:N</div>
+  <div class="cardinality" style="left:950px;  top:390px;">1:N</div>
+  <div class="cardinality" style="left:1220px; top:390px;">1:N</div>
+
+</div>
+</body></html>

@@ -7,7 +7,8 @@ event = {
             | "local_lab_status"
             | "count_master_customer" | "count_users" | "count_users_consented"
             | "get_master_customer" | "get_identity_map"
-            | "vm_health" | "mysql_health" | "tokenization_health",
+            | "vm_health" | "mysql_health" | "tokenization_health"
+            | "list_profile_page" | "list_consent_page",
     ...params
 }
 
@@ -115,6 +116,7 @@ def handler(event, context):
                 'password': body['password'],
             })
         elif action == 'register':
+            # rrn (주민번호) 운영 미수집 — body 에 들어와도 PrivateAPI 로 전달하지 않음
             result = _api_post('/internal/auth/register', {
                 'ls_user_id':    body['ls_user_id'],
                 'global_id':     body['global_id'],
@@ -122,7 +124,6 @@ def handler(event, context):
                 'password_hash': body['password_hash'],
                 'name':          body.get('name'),
                 'mobile':        body.get('mobile'),
-                'rrn':           body.get('rrn'),
                 'address':       body.get('address'),
             })
         elif action == 'get_user':
@@ -170,9 +171,23 @@ def handler(event, context):
             # P2 r22 — customer_identity_map (active_flag='Y' 활성 계열사 + source_customer_id)
             result = _api_get(f'/internal/identity_map/{body["global_id"]}')
 
+        # ── analytics batch (P3 r12,r13) ───────────────────────
+        elif action == 'list_profile_page':
+            # customer_360_profile 페이지 조회 — analytics_aggregator 가 page 루프.
+            # body['page'] (0~), body['size'] (1~50000, 기본 10000)
+            page = int(body.get('page', 0))
+            size = int(body.get('size', 10000))
+            result = _api_get(f'/internal/profile/list-all?page={page}&size={size}')
+
+        elif action == 'list_consent_page':
+            # users + consent 페이지 조회 — consent_snapshot_aggregator 가 일배치 page 루프.
+            page = int(body.get('page', 0))
+            size = int(body.get('size', 10000))
+            result = _api_get(f'/internal/consent/list-all?page={page}&size={size}')
+
         # ── 단일 헬스 체크 (P4 r40,41,42) ───────────────────────
         elif action == 'vm_health':
-            # P4 r40 — VirtualBox VM 단건 health. body['vm_id'] in (ls-db,ls-token,ls-api,ls-vpngw)
+            # P4 r40 — VirtualBox VM 단건 health. body['vm_id'] in (ls-db, ls-token, ls-api)
             result = _api_get(f'/internal/health/vm/{body["vm_id"]}')
         elif action == 'mysql_health':
             # P4 r41 — local MySQL health (8 tables alive 여부)

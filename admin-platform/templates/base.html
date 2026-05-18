@@ -7,61 +7,28 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
 </head>
 <body>
-<div class="admin-wrap">
-    <aside class="sidebar">
-        <div class="sidebar-logo">
-            <div class="logo-main">LifeSync360</div>
-            <div class="logo-sub">Admin Console</div>
+<header class="top-header">
+    <div class="header-inner">
+        <div class="brand">
+            <span class="brand-main">LifeSync 360</span>
+            <span class="brand-sub">Admin Dashboard</span>
         </div>
-        <nav class="sidebar-nav">
-            <a class="nav-item {% if active == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">
-                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-                    <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
-                </svg>
-                Executive Dashboard
-            </a>
-            <a class="nav-item {% if active == 'customer' %}active{% endif %}" href="{{ url_for('users') }}">
-                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="8" r="4"/>
-                    <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
-                </svg>
-                Customer 360
-            </a>
-            <a class="nav-item {% if active == 'ai' %}active{% endif %}" href="{{ url_for('ai') }}">
-                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3 3v18h18"/>
-                    <polyline points="7,15 11,10 14,13 20,5"/>
-                </svg>
-                AI 추천
-            </a>
-            <a class="nav-item {% if active == 'ops' %}active{% endif %}" href="{{ url_for('ops') }}">
-                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="2" y="3" width="20" height="14" rx="2"/>
-                    <line x1="8" y1="21" x2="16" y2="21"/>
-                    <line x1="12" y1="17" x2="12" y2="21"/>
-                </svg>
-                운영 모니터링
-            </a>
-            {% block sidebar_extra %}{% endblock %}
+        <nav class="top-tabs">
+            <a class="tab {% if active == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">전체 현황</a>
+            <a class="tab {% if active == 'customer' %}active{% endif %}"  href="{{ url_for('users') }}">Customer 360</a>
+            <a class="tab {% if active == 'ai' %}active{% endif %}"        href="{{ url_for('ai') }}">AI 추천</a>
+            <a class="tab {% if active == 'ops' %}active{% endif %}"       href="{{ url_for('ops') }}">Network</a>
         </nav>
-        <div class="sidebar-footer">USE_MOCK: {{ 'ON' if config.USE_MOCK else 'OFF' }}</div>
-    </aside>
-
-    <div class="main">
-        <div class="topbar">
-            <span class="topbar-title">{% block page_title %}{% endblock %}</span>
-            <div class="topbar-right">
-                <span class="admin-badge">{{ config.ADMIN_USER }}</span>
-                <form action="{{ url_for('logout') }}" method="get" style="display:inline">
-                    <button class="logout-btn" type="submit">로그아웃</button>
-                </form>
-            </div>
-        </div>
-        <div class="page-body">
-            {% block content %}{% endblock %}
+        <div class="header-right">
+            <span class="user-status"><span class="status-dot"></span> {{ config.ADMIN_USER }}@lifesync</span>
+            <form action="{{ url_for('logout') }}" method="get" style="display:inline">
+                <button class="logout-btn" type="submit">로그아웃</button>
+            </form>
         </div>
     </div>
-</div>
+</header>
+<main class="page-body">
+    {% block content %}{% endblock %}
+</main>
 </body>
 </html>

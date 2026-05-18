@@ -495,3 +495,584 @@ sudo systemctl restart strongswan-starter
 ```
 
 **근본 해결**: IaC팀이 CF에서 `PreSharedKey`를 Secrets Manager 고정값으로 지정하면 PSK는 불변 → 스크립트만으로 완전 자동화.
+
+---
+
+## 증상: `git checkout` 으로 미커밋 working tree 변경분 손실 (CSS 정리 사고 — 2026-05-18)
+
+```
+직전 라운드에 admin.css 에 다크테마 80여 줄 추가 (working tree only, 미커밋)
+→ CSS 정리 스크립트 사고로 git checkout 실행
+→ 다크테마 80여 줄 통째 손실
+```
+
+**원인**:
+- CSS 자동 정리 스크립트가 동적 prefix 미보호로 `.grade-vip/gold/silver/basic/care` (JS `grade-${grade}` 생성) 등 살아있는 클래스를 unused 판정 → 삭제
+- 복구하려고 `git checkout admin-platform/static/css/admin.css` 실행 → HEAD 의 169줄로 강제 복원되면서 working tree 의 265줄 (다크테마 포함) 손실
+- `git fsck --lost-found` dangling blob 104건 중 다크테마 포함 0건 (working tree 만 변경된 파일은 git 객체로 저장 안 됨)
+- PyCharm LocalHistory 도 4월 2일 마지막 (사고 시점보다 이전)
+
+**복구 — claude conversation jsonl 활용**:
+
+```bash
+# 1. 이번 프로젝트 jsonl 탐색
+ls ~/.claude/projects/C--Users-campus3S026-ls/*.jsonl
+
+# 2. dark-theme 패턴 포함 메시지 위치 찾기
+python3 -c "
+import json
+fp = '~/.claude/projects/C--Users-campus3S026-ls/bf8516c4-...jsonl'
+for i, line in enumerate(open(fp, encoding='utf-8')):
+    obj = json.loads(line)
+    msg = obj.get('message', {})
+    for c in msg.get('content', []):
+        if c.get('type') == 'tool_use' and c.get('name') == 'Edit':
+            inp = c.get('input', {})
+            if 'admin.css' in inp.get('file_path', '') and 'dark-theme' in inp.get('new_string', ''):
+                # NEW string 통째 추출
+                open('/tmp/admin_css_dark_block.txt', 'w', encoding='utf-8').write(inp['new_string'])
+                print(f'line {i}: {len(inp[\"new_string\"])} bytes 복원')
+"
+# → line 8735: 4438 bytes (98줄) 통째 추출
+
+# 3. 현재 admin.css 끝에 OLD 매칭 위치 찾아서 NEW 로 교체
+python3 -c "
+new = open('/tmp/admin_css_dark_block.txt', encoding='utf-8').read()
+fp = 'admin-platform/static/css/admin.css'
+css = open(fp, encoding='utf-8').read().replace('\r\n', '\n')
+old = '.btn-full { width: 100%; ... }\n.error-msg { ... }'   # 실제 OLD 첫줄들
+pos = css.find(old)
+open(fp, 'w', encoding='utf-8', newline='').write(css[:pos] + new)
+"
+```
+
+**재발 방지**:
+- working tree 손실 위험 있는 `git checkout`/`git restore --source=HEAD`/`git reset --hard` 전 반드시 `git status` 로 미커밋 변경 확인
+- 라운드 마다 work-in-progress 라도 `git stash` 또는 임시 commit (`wip:` prefix) 해두기
+- jsonl 의 `tool_use` 호출 (특히 `Edit`/`Write` 의 `new_string` 필드) 이 작업 복구의 마지막 기록일 수 있음
+
+**CSS 정리 스크립트 보강 — 동적 prefix 강제 보호**:
+```python
+DYN_PREFIXES = (
+    'grade-', 'rank-', 'sc-', 'status-', 'tab-', 'rec-',
+    'badge-', 'fill-', 'ladder-', 'view-rank-',
+)
+for c in classes_defined:
+    if c.startswith(DYN_PREFIXES): continue   # 동적 생성 클래스는 unused 후보에서 제외
+    if not re.search(r'\b' + re.escape(c) + r'\b', all_text):
+        unused.add(c)
+```
+
+---
+
+## 증상: Edge headless 캡처 — 인증/다크모드 페이지 안 잡힘 (2026-05-18)
+
+```
+Flask app (platform :5000, admin :5001) USE_MOCK=true 기동 후
+Edge headless 로 / (홈), /dashboard, 다크모드 캡처 시도 → light 만 잡히거나
+인증 페이지로 redirect 되어 캡처 실패
+```
+
+**원인 / 해결 — 3가지 패턴**:
+
+### A. 인증 필요 페이지 (platform 홈/settings — JS localStorage 토큰 체크)
+
+JS 가 `localStorage.getItem('ls_token')` 없으면 `/login` 으로 즉시 redirect.
+
+**해결 — `static/_seed.html` 임시 작성 후 같은 origin 으로 진입**:
+```html
+<!-- lifesync360-platform/static/_seed.html (임시, 캡처 후 삭제) -->
+<script>
+fetch('/api/register', {method:'POST'}).then(r=>r.json()).then(d=>{
+  localStorage.setItem('ls_token', d.token);
+  location.replace(new URLSearchParams(location.search).get('to') || '/');
+});
+</script>
+```
+```bash
+"$EDGE" --headless=new --window-size=480,800 --virtual-time-budget=10000 \
+  --screenshot=home.png "http://127.0.0.1:5000/static/_seed.html?to=/"
+# virtual-time-budget=10000 으로 fetch + redirect + 추가 fetch 다 기다림
+```
+
+### B. 인증 필요 페이지 (admin — Flask session cookie)
+
+SSR 페이지라 fetch 안 쓰고 cookie 기반 인증. file:// origin 으로 캡처해야 토큰/세션 우회 가능.
+
+**해결 — curl cookie + `<base href>` 삽입 + file:// 캡처**:
+```bash
+# 1. cookie jar 생성
+curl -s -c /tmp/admin_cookie.txt -X POST \
+  -d "username=admin&password=admin1234" \
+  http://127.0.0.1:5001/login -o /dev/null
+
+# 2. SSR HTML 받아서 base href 삽입 (상대경로 → http://127.0.0.1:5001/ 으로 resolve)
+curl -s -b /tmp/admin_cookie.txt http://127.0.0.1:5001/dashboard | \
+  python3 -c "import sys; t=sys.stdin.read(); print(t.replace('<head>','<head><base href=\"http://127.0.0.1:5001/\">'))" \
+  > /tmp/admin_dashboard.html
+
+# 3. file:// 로 캡처 (Windows 경로 형식 주의: file:///C:/...)
+"$EDGE" --headless=new --window-size=1440,900 --virtual-time-budget=3000 \
+  --screenshot=admin.png "file:///C:/Users/.../admin_dashboard.html"
+```
+
+> ⚠️ Windows 에서 file:// 경로는 `file:///C:/...` 대문자 드라이브 형식. bash `/c/Users/...` 직접 전달하면 Edge 가 못 받음.
+
+### C. 다크모드 캡처가 라이트로 보임
+
+`base.html` body 끝 toggle script 가 file:// origin 의 빈 localStorage 보고 `apply('light')` 호출 → 서버가 SSR cookie 로 붙여둔 `body.dark-theme` 클래스를 제거함.
+
+**해결 — toggle script 통째 제거 + admin.css inline embed**:
+```python
+import re
+html = open('admin_dashboard_dark.html', encoding='utf-8').read()
+css  = open('admin-platform/static/css/admin.css', encoding='utf-8').read()
+# <link rel="stylesheet"> 통째로 <style> 로 교체 (file:// origin 자원 로드 의존성 제거)
+html = re.sub(r'<link rel="stylesheet"[^>]*admin\.css[^>]*>', f'<style>{css}</style>', html)
+# 토글 script 통째 제거 (localStorage 빈 값 → light 강제 적용 방지)
+html = re.sub(r'<script>\s*//\s*테마 토글.*?</script>', '', html, flags=re.DOTALL)
+open('admin_dashboard_dark_inline.html', 'w', encoding='utf-8').write(html)
+```
+```bash
+"$EDGE" --headless=new --window-size=1440,900 --virtual-time-budget=3000 \
+  --user-data-dir=/tmp/edge_dark \
+  --screenshot=dark.png "file:///C:/.../admin_dashboard_dark_inline.html"
+```
+
+**추가 주의사항**:
+- 병렬로 Edge headless 동시 실행 시 같은 user-data-dir 충돌 가능 → 각 호출마다 `--user-data-dir` 분리
+- 캡처 안 됐는데 동일 사이즈/md5 결과 나오면 caching 의심 → `--user-data-dir=/tmp/edge_$$` 같이 매번 새 dir
+- 검증 완료 후 `static/_seed.html`, `/tmp/admin_*.html`, `/tmp/edge_*/` 등 임시 파일 정리
+
+
+## 증상: Jinja2 `dict.items` 메서드 충돌 — `TypeError: 'builtin_function_or_method' object is not iterable` (2026-05-18)
+
+admin `/ai` `/ops` 페이지 렌더 시 500 + Flask traceback:
+```
+File "templates/ai.html", line 186, in block 'content'
+TypeError: 'builtin_function_or_method' object is not iterable
+```
+
+**원인**
+
+Jinja2 attribute resolution은 `obj.attr` 표현에서 `getattr(obj, attr)` 우선 → `getitem(obj, attr)` fallback. mockup dict 의 키 이름이 `items` 면 dict 의 `.items()` 메서드(callable)가 잡혀서 for 루프에서 iterable 아님:
+
+```python
+MOCKUP_AI_INSIGHT = { 'items': [...] }     # ← 키 이름이 'items'
+```
+```jinja2
+{% for it in insight.items %}              # ← dict.items() 메서드가 잡힘
+```
+
+**해결**
+
+mockup dict 의 키 이름 자체를 변경 (`items` → `rows` 또는 `lines`) + 템플릿 동시 수정:
+
+| 파일 | 변경 |
+|---|---|
+| `mockup_data.py` `MOCKUP_AI_INSIGHT` | `'items'` → `'rows'` |
+| `mockup_data.py` `MOCKUP_NET_*` (VPC 6 카드) | `'items'` → `'rows'` |
+| `mockup_data.py` `MOCKUP_NET_TOPOLOGY.aws[i]/gcp/onprem` | `'items'` → `'lines'` |
+| `templates/ai.html` | `insight.items` → `insight.rows` |
+| `templates/ops.html` | `c.items` → `c.rows`, `a.items` → `a.lines`, `topology.gcp.items` → `topology.gcp.lines` |
+
+**재발 방지**
+
+- mockup/context dict 에 **`items` / `keys` / `values` / `update` / `pop` / `get` / `copy` 등 dict 메서드명을 key 로 쓰지 말 것** (Jinja에서 호출 시 메서드 우선)
+- 명시 접근 `dict['items']` 도 가능: `{% for it in insight['items'] %}` — 다만 일관성 위해 키 이름 변경 권장
+- 충돌 가능 키 확인:
+  ```bash
+  python -c "print([m for m in dir({}) if not m.startswith('_')])"
+  # ['clear','copy','fromkeys','get','items','keys','pop','popitem','setdefault','update','values']
+  ```
+
+
+## 증상: PrivateAPI `pymysql.connect()` 매 요청 새 connection — handler 시간의 50~70% (2026-05-18)
+
+PrivateAPI 단순 GET 응답이 13~50ms — 분해해보면 connect setup 이 8~25ms 차지.
+
+**원인**
+
+`get_db()` 가 매 요청 새 connection 생성 → TCP handshake + MySQL auth 4-way (greeting/handshake/auth/OK). LAN 환경(192.168.56.x)이라 빠른 편이지만 매 요청 누적 부담.
+
+```python
+def get_db():
+    return pymysql.connect(host=..., user=..., password=..., database=DB_NAME, cursorclass=DictCursor)
+```
+
+**해결 — DBUtils PooledDB 도입** (`onprem-prod-repo/ansible/roles/private_api/`)
+
+```python
+from dbutils.pooled_db import PooledDB
+
+_db_pool = PooledDB(
+    creator        = pymysql,
+    mincached      = int(os.environ.get('DB_POOL_MIN', '2')),
+    maxcached      = int(os.environ.get('DB_POOL_MAXIDLE', '5')),
+    maxconnections = int(os.environ.get('DB_POOL_MAX', '10')),
+    blocking       = True,        # 고갈 시 drop 대신 대기
+    ping           = 1,           # 매 checkout 시 SELECT 1 (stale 방지)
+    host           = os.environ['DB_HOST'],
+    user           = os.environ['DB_USER'],
+    password       = os.environ['DB_PASS'],
+    database       = DB_NAME,
+    cursorclass    = pymysql.cursors.DictCursor,
+    charset        = 'utf8mb4',
+    autocommit     = False,
+)
+
+def get_db():
+    return _db_pool.connection()    # 기존 호출자 0줄 변경. db.close()는 pool 반환으로 동작
+```
+
+ansible role `Install Python dependencies` task 에 `DBUtils` pip 추가.
+
+**효과**
+
+| 항목 | 변경 전 | 변경 후 |
+|---|---|---|
+| `pymysql.connect()` setup | 8~25ms (매번 handshake) | 0.5ms (pool 재사용) |
+| `ping=1` overhead | — | +0.5~1ms |
+| 순 효과 | — | 7~24ms 단축 / 요청 (50~60% 단축) |
+
+**운영 주의**
+
+- `mincached=2` → systemd start 시 즉시 2 connection MySQL 에 붙음. `max_connections` (기본 151) 확인
+- uvicorn workers > 1 이면 총 connection = workers × DB_POOL_MAX
+- 트래픽 많아지면 `ping=1` 오버헤드 줄이려면 `ping=0` 으로 조정
+
+
+## 증상: 로컬 캡처 시 `apply.html` 이 `/login` 으로 redirect — JWT 토큰 부재 (2026-05-18)
+
+`file:///apply.html` 로 띄우면 `<script>` 가 `localStorage.getItem('ls_token')` 확인 → 빈 값이면 `window.location.href = '/login'`. 캡처가 로그인 페이지로 가버림.
+
+**원인**
+
+브라우저 직접 접근(http://localhost:5000)이면 localStorage 가 origin 단위 유지되어 token 있음. 캡처용으로 받은 HTML 을 file:// 로 띄우면 origin 이 `file:` 라 localStorage 비어있음.
+
+**해결 — `<body>` 직후 token inline 주입**
+
+```bash
+TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
+    -d '{"email":"test@lifesync.com","password":"password123"}' \
+    http://127.0.0.1:5000/api/login | python -c "import json,sys; print(json.load(sys.stdin)['token'])")
+
+curl -s "http://127.0.0.1:5000/product/DEP-001/apply" -o /tmp/platform_shots/apply_raw.html
+
+python -c "
+src = open(r'/tmp/platform_shots/apply_raw.html', encoding='utf-8').read()
+src = src.replace('/static/css/style.css', 'http://127.0.0.1:5000/static/css/style.css')
+src = src.replace('<body>', '<body><script>localStorage.setItem(\"ls_token\",\"$TOKEN\");</script>')
+open(r'/tmp/platform_shots/apply.html','w',encoding='utf-8').write(src)
+"
+```
+
+Edge headless 실행:
+```bash
+WIN_HTML=$(cygpath -w /tmp/platform_shots/apply.html)
+WIN_HTML_SLASH=$(echo "$WIN_HTML" | tr '\\' '/')        # backslash → slash (sed 는 quoting 까다로움)
+URL="file:///${WIN_HTML_SLASH}"
+"$EDGE" --headless=new --window-size=560,1200 \
+        --user-data-dir="$(cygpath -w /tmp/edge_apply)" \
+        --screenshot="$WIN_PNG" "$URL"
+```
+
+→ `/api/me` fetch 는 file:// origin 이라 CORS 차단되어 "로딩 중..." 그대로지만 약관 동의 박스/CTA 등 SSR + JS 동작 부분은 정상 렌더. 폼 구조 검증에는 무관.
+
+**재발 방지**
+
+- 인증 필요 페이지 file:// 캡처 → token inline 주입 패턴 표준
+- bash 에서 Windows 경로 변환은 `tr '\\' '/'` 권장 (sed 는 quoting 까다로움)
+- 캐싱 충돌 방지 `--user-data-dir` 매번 새 dir
+
+
+## 증상: Service-DB v3 슬림화 따른 코드 잔재 — INSERT 11컬럼 / SELECT 17컬럼 (2026-05-18)
+
+`customer_product_application` v3 가 16 → 9 컬럼으로 슬림화 (`applicant_name/phone/email`, `apply_amount`, `contact_time`, `memo`, `agree_marketing` 7개 제거 + `status` ENUM 화). 운영 적용 시 platform INSERT / admin SELECT 가 제거된 컬럼 참조해서 500 발생 위험.
+
+**해결 — 코드 동시 정합화**
+
+| 파일 | 변경 |
+|---|---|
+| `lifesync360-platform/app.py` `api_product_apply` | INSERT 11컬럼 → **4컬럼** (`application_id, global_id, ls_user_id, product_id`). `_call_onprem('get_user')` 로 applicant 가져오는 14줄 블록 통째 제거. `data = request.get_json()` 도 제거 |
+| `admin-platform/app.py` `/api/admin/applications` | SELECT 17컬럼 → **12컬럼** (제거된 7컬럼 빼고 `reviewer_id`/`reviewed_at` 추가) |
+| `lifesync360-platform/app.py` `/api/my-applications` | `a.product_code` → `p.product_code` (v2 정규화로 product_master JOIN 컬럼) |
+| `lifesync360-platform/templates/apply.html` | 마케팅 동의 체크박스(`row-mkt`) 행 + `cbMkt` JS 변수 + `payload.agree_marketing` 필드 제거 |
+
+**검증 명령**
+
+```bash
+# customer_product_application 의 v3 제거 컬럼 잔재 확인 (기대: 0)
+grep -n "a\.applicant_\|a\.apply_amount\|a\.contact_time\|a\.memo\|a\.agree_marketing" \
+    admin-platform/app.py lifesync360-platform/app.py
+
+# JS 폼 잔재
+grep -n "agree_marketing\|cbMkt\|row-mkt" lifesync360-platform/templates/apply.html
+
+# ast 통과
+python -c "
+import ast
+for f in ['admin-platform/app.py','lifesync360-platform/app.py']:
+    ast.parse(open(f, encoding='utf-8').read()); print('OK', f)
+"
+```
+
+**재발 방지**
+
+- DB 스키마 변경 시 `Service-DB/CHANGELOG.md` 확인 → 영향 받는 SQL 호출 grep → 코드 동시 수정
+- 인라인 `CREATE TABLE IF NOT EXISTS` 같은 자동 복구 안전망은 단일 출처 원칙에 어긋남 — 운영은 Service-DB sql 만 신뢰
+
+
+## 증상: 코드/Mockup 에 `ls-vpngw` / `lc-api` / `lc-db` / `lc-tokenz` 표기 잔재 (2026-05-18)
+
+테스트 단계에서 들어간 `ls-vpngw` (VPN 게이트웨이 VM, 운영 미사용) 와 잘못된 `lc-*` 접두 표기가 PrivateAPI 코드 + Lambda docstring + admin mockup 에 흩어져 있음.
+
+**원인**
+
+- `ls-vpngw` 는 테스트용으로 운영 환경 미사용 (실제 VM 3종: `ls-db` / `ls-token` / `ls-api`)
+- `lc-*` 는 표기 오기 (실제는 `ls-*`)
+- 시연 mockup (MOCKUP_LOCAL_LAB / MOCKUP_DASH_CLOUD3 / MOCKUP_NET_TOPOLOGY) 에 반영되어 admin 화면에서 잘못된 호스트명 노출
+
+**해결**
+
+| 파일 | 변경 |
+|---|---|
+| `onprem-prod-repo/ansible/roles/private_api/files/app.py` | `VM_HOSTS` dict 에서 `'ls-vpngw'` 행 제거 → 3 VM (`ls-db`/`ls-token`/`ls-api`) |
+| `lambda/onprem_customer_query/handler.py` | docstring 의 `vm_id in (ls-db, ls-token, ls-api, ls-vpngw)` → `(ls-db, ls-token, ls-api)` |
+| `admin-platform/mockup_data.py` | (a) `MOCKUP_LOCAL_LAB` 의 ls-vpngw 행 제거 (4 환경으로) <br>(b) `MOCKUP_DASH_CLOUD3` On-Premises sub `'lc-db · lc-tokenz · lc-api'` → `'ls-db · ls-token · ls-api'` <br>(c) `MOCKUP_NET_TOPOLOGY.onprem` lines `'lc-db (MySQL) / lc-tokenz / lc-api (PrivateAPI)'` → `'ls-db (MySQL) / ls-token (Tokenization) / ls-api (PrivateAPI)'` |
+
+**검증**
+
+```bash
+# 코드 잔재 grep (기대: 0)
+grep -n "ls-vpngw\|lc-api\|lc-db\|lc-tokenz" \
+    onprem-prod-repo/ansible/roles/private_api/files/app.py \
+    lambda/onprem_customer_query/handler.py \
+    admin-platform/mockup_data.py
+```
+
+**유의** — 과거 기록 문서 (`local-test-troubleshooting.md`, `project-progress.md`, `pii-encryption-guide.md`, `test-reference.md`, `lambda-to-onprem-network.md`, `local-test-remaining.md`) 에 남은 `ls-vpngw`/`lc-*` 표기는 **history 보존을 위해 그대로 둠** (이력 추적 가치).
+
+**재발 방지**
+
+- 새 VM/서비스 호스트명 추가 시 코드 + mockup + 문서 동시 갱신
+- PrivateAPI 라우트 명세는 `docs/private-api.md` 단일 출처 (2026-05-18 신규)
+- VM_HOSTS env override (`VM_LS_DB_HOST` 등 + `_PORT`) — 운영 IP 변경 시 코드 수정 없이 env 만 갱신
+
+
+## 증상: USE_MOCK=true / false 응답 스키마 불일치 — 시연 검증 후 운영 전환 시 화면 깨질 위험 (2026-05-18 ③)
+
+admin 라우트 3개에서 시연(USE_MOCK=true) 응답과 운영(USE_MOCK=false) 응답의 키/형태가 다름:
+
+| API | 시연 응답 | 운영 응답 |
+|---|---|---|
+| `/api/dashboard/summary` | `{kpi_top: [...], kpi_mid: [...]}` | `{master_customer: {count}, users_active: {count}, users_consented: {count}}` |
+| `/api/customer/profile/{gid}` | 평면 dict (`{ls_user_id, global_id, name, email, grade}`) | 중첩 (`{customer: {profile, identities, ...}, consents: [...]}`) |
+| `/api/s3/status` | 5 카드 list | dict (`{raw_bucket_files, today_ingested, ...}`) |
+
+→ 프론트가 `data.kpi_top` vs `data.master_customer.count` 분기. 시연에서 검증한 화면이 운영 전환 시 깨질 가능성.
+
+**해결 — 백엔드가 양쪽 동일 구조 반환** (admin app.py)
+
+```python
+# /api/dashboard/summary — 양쪽 모두 9 카드 list
+def _stub_aurora_summary():
+    if USE_MOCK:
+        return MOCKUP_DASH_KPI   # 9 카드 list
+    cards = [dict(c) for c in MOCKUP_DASH_KPI]   # baseline deep copy
+    # 운영 실 호출 결과로 value 만 덮어쓰기 (부분 실패 mockup fallback)
+    try:
+        mc = _call_onprem('count_master_customer').get('count')
+        if mc is not None: cards[0]['value'] = f'{int(mc):,}'
+    except Exception: pass
+    # ... 9 카드 모두 실 호출 + fallback
+    return cards
+
+
+# /api/s3/status — 운영 dict → 5 카드 list 매핑 헬퍼
+def _s3_status_cards():
+    if USE_MOCK:
+        return MOCKUP_DASH_S3_5
+    raw = _ping_s3_ingestion() or {}
+    cards = [dict(c) for c in MOCKUP_DASH_S3_5]
+    cards[0]['value'] = f"{raw.get('raw_bucket_files', 0):,}"
+    # ...
+    return cards
+
+
+# /api/customer/profile/{gid} — 시연 mockup 을 운영 구조로 재구성
+def _profile_full_mock(global_id):
+    user  = next((u for u in MOCK_USERS if u.get('global_id') == global_id), None) or {}
+    score = MOCK_SCORES.get(global_id, {}) or {}
+    return {
+        'global_id': global_id,
+        'customer': {
+            'customer_status': 'ACTIVE',
+            'vip_grade':       user.get('grade', 'BASIC'),
+            'first_created_dt':'2023-01-15T10:00:00',
+            'identities':      MOCK_IDENTITIES.get(global_id, []),
+            'profile': {
+                'lifesync_score': float(score.get('dynamic_score', 0) or 0),
+                'health_score':   float(score.get('health_score', 0)   or 0),
+                'finance_score':  float(score.get('fin_score', 0)      or 0),
+                'asset_score':    75.0, 'risk_score': 12.0,
+                'last_calc_dt':   score.get('update_time', ''),
+            },
+        },
+        'consents': MOCK_CONSENTS.get(global_id, []),
+    }
+```
+
+**검증** — USE_MOCK=true 라이브 호출로 3 API 응답 구조 확인:
+```bash
+curl -s -b cookie.txt http://127.0.0.1:5001/api/dashboard/summary | python -m json.tool | head -5
+# [{"label": "통합 고객 수", "value": "1,000,000", "sub": ..., "accent": ..., "is_status": false}, ...]
+```
+
+**재발 방지**
+
+- USE_MOCK 분기마다 같은 응답 스키마 보장 — 시연 mockup 을 운영 구조와 1:1 매핑하거나, 운영 응답을 시연 mockup 구조로 가공
+- 신규 API 추가 시 시연/운영 두 분기 모두 동일 키 사용 검증
+- 응답 스키마 변경 시 `docs/admin-api.md` 의 JSON 예시 + `docs/admin-data-flow.md` 의 read source 표 동시 갱신
+
+
+## 증상: PrivateAPI `/internal/pii/{global_id}` 평문 5필드 반환 — admin 운영자도 RRN 포함 평문 PII 노출 (2026-05-18 ③)
+
+PII 마스킹 처리 위치가 없어서 PrivateAPI 가 복호화 후 평문 그대로 응답:
+
+```python
+# onprem-prod-repo/.../app.py
+@app.get('/internal/pii/{global_id}')
+def get_pii(global_id: str):
+    ...
+    return {
+        'global_id': global_id,
+        'name':      decrypt_pii(row['customer_name_enc']),   # ← 평문 김철수
+        'rrn':       decrypt_pii(row['rrn_enc']),             # ← 평문 주민번호
+        'mobile':    decrypt_pii(row['mobile_enc']),
+        'email':     decrypt_pii(row['email_enc']),
+        'address':   decrypt_pii(row['address_enc']),
+    }
+```
+
+운영 USE_MOCK=false 전환 시 admin → Lambda → PrivateAPI → admin 화면에 평문 5필드 그대로 전달. **주민번호 평문 노출은 보안 사고**.
+
+**해결 옵션**
+
+| 옵션 | 위치 | 평가 |
+|---|---|---|
+| A. PrivateAPI 단 마스킹 | `/internal/pii` 응답이 처음부터 마스킹된 값 + RRN 기본 제외 | ★★★ 최소 신뢰 영역 (운영자도 평문 못 받음) |
+| B. admin app.py 단 마스킹 | admin 이 평문 받아서 마스킹 (warm pool 에 평문 잔존 가능) | ★★ |
+| C. 평문 유지 (현재) | 운영 정책 위반 가능 | ✗ |
+
+**권장 — A 옵션** (PrivateAPI 한 함수만 수정):
+```python
+def _mask_name(s):    return s[0] + '*' * (len(s)-1) if s else None
+def _mask_phone(s):   return s[:3] + '-****-' + s[-4:] if s and len(s)>=10 else None
+def _mask_email(s):   return s.split('@')[0][:2] + '***@' + s.split('@')[1] if s and '@' in s else None
+def _mask_address(s): return ' '.join(s.split()[:2]) + ' ...' if s else None    # 시/도 + 시/군/구만
+
+@app.get('/internal/pii/{global_id}')
+def get_pii(global_id: str):
+    ...
+    return {
+        'global_id': global_id,
+        'name':      _mask_name(decrypt_pii(row['customer_name_enc'])),
+        'rrn':       None,                                              # ← 기본 응답 X
+        'mobile':    _mask_phone(decrypt_pii(row['mobile_enc'])),
+        'email':     _mask_email(decrypt_pii(row['email_enc'])),
+        'address':   _mask_address(decrypt_pii(row['address_enc'])),
+    }
+```
+
+**RRN 별도 권한 엔드포인트** — `/internal/pii/{global_id}/rrn` (X-Internal-Token 인증 + audit log)
+
+**재발 방지**
+
+- PII 복호화는 가장 깊은 레이어 (PrivateAPI) 에서 즉시 마스킹
+- 평문 PII 가 admin/Lambda warm pool 에 머무는 시간 최소화
+- 운영 정책상 admin 운영자도 기본은 RRN 못 봄. 필요 시 별도 권한 + audit
+- `docs/admin-data-flow.md` 의 "외부 공유 안전 영역" 5건 외에는 모두 권한 통제
+
+
+## 증상: `count_users_consented` 설계서 SQL vs 운영 코드 정의 차이 — `users.consent_completed` sync 부재 (2026-05-18 ③)
+
+설계서 V4 P1 row 5: `WHERE user_status='ACTIVE' AND consent_completed='Y'` (users 단일 컬럼)
+PrivateAPI `/internal/count/users_consented` 구현: `users JOIN consent ... consent_flag='Y' AND revoke_dt IS NULL`
+
+→ 결과 값이 다를 수 있음.
+
+**원인 — `users.consent_completed` 가 모두 'N' 고정**
+
+`auth_save_consent` Lambda 및 `auth_register` 가 consent 테이블만 UPSERT 하고 **`users.consent_completed` 컬럼 UPDATE 하지 않음**:
+```python
+# onprem-prod-repo/.../app.py auth_register
+cur.execute(
+    'INSERT INTO users (ls_user_id, global_id, login_email, password_hash, mobile) VALUES (...)',
+    ...
+)
+# ← consent_completed 명시 X → DDL `NOT NULL DEFAULT 'N'` 적용
+```
+
+`auth_save_consent` 도 consent 테이블 UPSERT 만, users 안 건드림.
+
+**결과**
+
+| 옵션 | 현재 결과 | 의미 |
+|---|---|---|
+| 설계서 SQL (`consent_completed='Y'`) | **0** (모두 'N') | 무용지물 — sync 없음 |
+| PrivateAPI 구현 (consent JOIN) | 정상 (예: 60K) | 실제 동의 분석대상 |
+
+**해결 — B 옵션 유지 (consent JOIN)** ⭐ 사용자 결정
+
+PrivateAPI 구현이 진실 — `users.consent_completed` 컬럼은 사실상 죽은 컬럼. 설계서 SQL 만 갱신해서 운영 정의와 통일하면 됨.
+
+**대안 (A 옵션 가려면)**
+
+추후 결정 시:
+1. `auth_save_consent` 끝에 `UPDATE users SET consent_completed='Y'/'N' WHERE global_id=?` 추가
+2. 기존 회원 일괄 백필: `UPDATE users u SET consent_completed='Y' WHERE EXISTS (SELECT 1 FROM consent c WHERE c.global_id=u.global_id AND c.consent_flag='Y' AND c.revoke_dt IS NULL)`
+3. `users(user_status, consent_completed)` 복합 인덱스 추가
+
+**재발 방지**
+
+- 컬럼 정의만 두고 sync 코드 없으면 default 값 고정 — `NOT NULL DEFAULT 'N'` 같은 컬럼은 작성 흐름 점검
+- 설계서 SQL 과 운영 코드 SQL 이 다르면 어느 쪽이 진실인지 명확히 결정 (이번엔 코드 진실)
+- `docs/admin-data-flow.md` "결정 사항" 표에 명시
+
+
+## 증상: PrivateAPI `/internal/profile/list-all` MySQL JSON_ARRAYAGG 응답 — Python dict vs JSON 문자열 혼재 (2026-05-18 ③)
+
+`consent/list-all` 신규 엔드포인트가 `JSON_ARRAYAGG(JSON_OBJECT(...))` 로 user 당 consents 묶음 반환:
+
+```sql
+SELECT u.global_id, u.ls_user_id, u.user_status,
+       (SELECT JSON_ARRAYAGG(JSON_OBJECT(
+            'domain', c.domain,
+            'consent_flag', c.consent_flag,
+            'consent_dt', c.consent_dt,
+            'revoke_dt', c.revoke_dt))
+        FROM consent c WHERE c.global_id = u.global_id) AS consents
+FROM users u
+WHERE u.user_status = 'ACTIVE'
+ORDER BY u.global_id LIMIT %s OFFSET %s
+```
+
+**문제** — pymysql 이 `consents` 컬럼을 **JSON 문자열로 반환** (dict 변환 X). consent_snapshot_aggregator 가 받으면 string 그대로 S3 PutObject — admin 이 GetObject 후 `consents[0].domain` 접근 시 `string index out of range` 또는 `unhashable type` 에러.
+
+**해결 — PrivateAPI 응답 시 dict 로 정규화**
+
+```python
+for r in rows:
+    if isinstance(r.get('consents'), str):
+        r['consents'] = json.loads(r['consents']) if r['consents'] else []
+    elif r.get('consents') is None:
+        r['consents'] = []
+```
+
+PrivateAPI app.py 의 `list_consent_all` 함수 마지막에 추가. Lambda / admin / S3 모두 dict 로 통일.
+
+**재발 방지**
+
+- pymysql + MySQL 8 JSON 컬럼은 driver/버전에 따라 dict 자동 변환 / 문자열 둘 다 가능 — 응답 직전에 명시적 `json.loads` 정규화
+- 새 엔드포인트가 JSON 컬럼 반환 시 같은 패턴 적용

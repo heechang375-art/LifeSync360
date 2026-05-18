@@ -31,6 +31,7 @@
       - boto3
       - pymysql
       - cryptography
+      - DBUtils
     virtualenv: /opt/private-api/venv
 
 - name: Remove default Nginx site

@@ -7,46 +7,53 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>
         .apply-page { max-width: 560px; margin: 0 auto; padding: 16px 16px 120px; }
-        .apply-summary { padding: 16px; background: #eff6ff; border: 1px solid #bfdbfe;
+        .apply-summary { padding: 18px; background: #eff6ff; border: 1px solid #bfdbfe;
                          border-radius: 12px; margin-bottom: 18px; }
         .apply-summary .chip { display: inline-block; padding: 3px 10px; background: #3b82f6; color: #fff;
                                border-radius: 999px; font-size: 12px; font-weight: 600; }
         .apply-summary .name { font-size: 18px; font-weight: 700; color: #0f172a; margin-top: 8px; }
         .apply-summary .desc { color: #475569; font-size: 13px; margin-top: 4px; line-height: 1.5; }
-        .apply-section { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+
+        .applicant-box { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+                         padding: 14px 16px; margin-bottom: 14px; display: flex; gap: 12px; align-items: center; }
+        .applicant-icon { width: 38px; height: 38px; border-radius: 999px; background: #f1f5f9;
+                          display: flex; align-items: center; justify-content: center; font-size: 18px; }
+        .applicant-text { flex: 1; }
+        .applicant-text .label { font-size: 11px; color: #94a3b8; }
+        .applicant-text .val { font-size: 14px; font-weight: 600; color: #0f172a; }
+
+        .terms-section { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
                          padding: 16px; margin-bottom: 14px; }
-        .apply-section h3 { font-size: 14px; color: #1e40af; margin: 0 0 12px; }
-        .form-row { margin-bottom: 12px; }
-        .form-row label { display: block; font-size: 13px; color: #475569; margin-bottom: 6px; font-weight: 500; }
-        .form-row label .req { color: #ef4444; margin-left: 2px; }
-        .form-row input, .form-row select, .form-row textarea {
-            width: 100%; padding: 10px 12px; font-size: 14px; border: 1px solid #cbd5e1;
-            border-radius: 8px; box-sizing: border-box; background: #fff;
-        }
-        .form-row input:focus, .form-row select:focus, .form-row textarea:focus {
-            outline: 0; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.15);
-        }
-        .form-row textarea { resize: vertical; min-height: 70px; }
-        .form-row .hint { font-size: 12px; color: #94a3b8; margin-top: 4px; }
-        .agree-row { display: flex; align-items: flex-start; gap: 8px; padding: 12px 14px;
-                     background: #f8fafc; border-radius: 8px; }
-        .agree-row input { margin-top: 2px; accent-color: #3b82f6; }
-        .agree-row label { font-size: 13px; color: #475569; line-height: 1.5; cursor: pointer; }
+        .terms-section h3 { font-size: 14px; color: #1e40af; margin: 0 0 12px; }
+        .agree-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px;
+                     background: #f8fafc; border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
+        .agree-row.checked { background: #eff6ff; }
+        .agree-row input { margin-top: 2px; accent-color: #3b82f6; flex-shrink: 0; }
+        .agree-row label { font-size: 13px; color: #475569; line-height: 1.5; cursor: pointer; flex: 1; }
+        .agree-row label strong { color: #1e40af; }
+        .agree-row .terms-link { font-size: 11px; color: #94a3b8; text-decoration: underline; cursor: pointer; }
+
+        .agree-all { background: #1e40af; color: #fff; }
+        .agree-all label { color: #fff; }
+        .agree-all label strong { color: #fef3c7; }
+
         .apply-cta { position: fixed; bottom: 0; left: 0; right: 0; padding: 14px 16px 20px;
                      background: linear-gradient(to top, #fff 80%, rgba(255,255,255,0)); }
         .apply-cta button { width: 100%; padding: 14px; font-size: 15px; font-weight: 700;
                             background: #3b82f6; color: #fff; border: 0; border-radius: 12px; cursor: pointer; }
         .apply-cta button:disabled { background: #cbd5e1; cursor: not-allowed; }
-        .apply-result { padding: 32px 24px; text-align: center; background: #f0fdf4;
+
+        .apply-result { padding: 40px 24px 32px; text-align: center; background: #f0fdf4;
                          border: 1px solid #86efac; border-radius: 14px; margin-top: 40px; display: none; }
-        .apply-result .icon { font-size: 48px; margin-bottom: 12px; }
-        .apply-result .title { font-size: 18px; font-weight: 700; color: #166534; }
-        .apply-result .desc { color: #15803d; font-size: 13px; margin-top: 8px; line-height: 1.6; }
-        .apply-result .app-id { display: inline-block; padding: 4px 10px; background: #fff;
-                                 border-radius: 6px; font-family: monospace; font-size: 12px; margin-top: 12px; }
-        .apply-result a { display: inline-block; margin-top: 16px; padding: 10px 20px;
-                          background: #3b82f6; color: #fff; border-radius: 8px;
-                          text-decoration: none; font-size: 14px; font-weight: 600; }
+        .apply-result .icon { font-size: 56px; margin-bottom: 14px; }
+        .apply-result .title { font-size: 20px; font-weight: 700; color: #166534; margin-bottom: 8px; }
+        .apply-result .desc { color: #15803d; font-size: 14px; line-height: 1.6; margin-bottom: 20px; }
+        .apply-result .app-id { display: inline-block; padding: 8px 14px; background: #fff;
+                                 border-radius: 8px; font-family: 'Consolas', monospace; font-size: 13px;
+                                 color: #14532d; border: 1px solid #bbf7d0; margin-bottom: 24px; }
+        .apply-result a { display: inline-block; padding: 12px 28px;
+                          background: #3b82f6; color: #fff; border-radius: 10px;
+                          text-decoration: none; font-size: 15px; font-weight: 600; }
     </style>
 </head>
 <body>
@@ -70,64 +77,46 @@
             <div class="desc">{{ item.desc }}</div>
         </div>
 
-        <form id="apply-form">
-            <div class="apply-section">
-                <h3>신청자 정보</h3>
-                <div class="form-row">
-                    <label>이름<span class="req">*</span></label>
-                    <input type="text" id="applicant_name" required maxlength="20" placeholder="홍길동">
-                </div>
-                <div class="form-row">
-                    <label>휴대전화<span class="req">*</span></label>
-                    <input type="tel" id="applicant_phone" required pattern="01[0-9]-?[0-9]{3,4}-?[0-9]{4}" placeholder="010-1234-5678">
-                </div>
-                <div class="form-row">
-                    <label>이메일</label>
-                    <input type="email" id="applicant_email" placeholder="example@lifesync.com">
-                </div>
+        <!-- 로그인 사용자 정보 (자동 적용) — 입력 X -->
+        <div class="applicant-box">
+            <div class="applicant-icon">👤</div>
+            <div class="applicant-text">
+                <div class="label">신청자 (로그인 정보 자동 적용)</div>
+                <div class="val" id="applicant-name">로딩 중...</div>
+            </div>
+        </div>
+
+        <!-- 약관 동의 — 핵심 -->
+        <div class="terms-section">
+            <h3>약관 동의</h3>
+
+            <div class="agree-row agree-all" id="agree-all-row">
+                <input type="checkbox" id="agree_all">
+                <label for="agree_all"><strong>모두 동의</strong> · 필수/선택 약관 일괄 동의</label>
             </div>
 
-            <div class="apply-section">
-                <h3>신청 상세</h3>
-                <div class="form-row">
-                    <label>신청 금액 / 한도</label>
-                    <input type="text" id="apply_amount" placeholder="예: 100만원 / 보장 한도 5천만원">
-                    <div class="hint">상품 특성에 따라 정확한 금액은 담당자와 상담 후 확정됩니다.</div>
-                </div>
-                <div class="form-row">
-                    <label>희망 상담 시간</label>
-                    <select id="contact_time">
-                        <option value="any">아무때나</option>
-                        <option value="morning">오전 (9~12시)</option>
-                        <option value="afternoon">오후 (13~17시)</option>
-                        <option value="evening">저녁 (18~20시)</option>
-                    </select>
-                </div>
-                <div class="form-row">
-                    <label>문의 / 메모</label>
-                    <textarea id="memo" maxlength="300" placeholder="추가로 문의하실 내용이 있다면 작성해 주세요."></textarea>
-                </div>
+            <div class="agree-row" id="row-terms">
+                <input type="checkbox" id="agree_terms" required>
+                <label for="agree_terms">
+                    <strong>(필수)</strong> 본 상품 약관 및 신청 정보 활용에 동의합니다.
+                    <span class="terms-link" onclick="alert('약관 전문은 운영 환경 별도 페이지에서 제공')">전문 보기 ▶</span>
+                </label>
             </div>
 
-            <div class="apply-section">
-                <h3>약관 동의</h3>
-                <div class="agree-row" style="margin-bottom:10px;">
-                    <input type="checkbox" id="agree_terms" required>
-                    <label for="agree_terms"><strong>(필수)</strong> 신청 정보 수집·이용 및 본 상품 약관에 동의합니다.</label>
-                </div>
-                <div class="agree-row">
-                    <input type="checkbox" id="agree_marketing">
-                    <label for="agree_marketing">(선택) 마케팅 정보 수신 및 혜택 안내에 동의합니다.</label>
-                </div>
+            <div class="agree-row" id="row-pii">
+                <input type="checkbox" id="agree_pii" required>
+                <label for="agree_pii">
+                    <strong>(필수)</strong> 개인정보 제3자 제공 (담당자 연락 목적) 동의합니다.
+                </label>
             </div>
-        </form>
+        </div>
     </main>
 
     <main class="apply-page" id="apply-result-wrap" style="display:none;">
         <div class="apply-result" id="apply-result-card" style="display:block;">
             <div class="icon">✅</div>
             <div class="title">신청이 접수되었습니다</div>
-            <div class="desc">담당자가 영업일 기준 1~2일 내 연락드릴 예정이에요.</div>
+            <div class="desc">진행 상황은 <strong>MY &gt; 신청 내역</strong>에서 확인하실 수 있어요.</div>
             <div class="app-id" id="app-id"></div>
             <a href="/">홈으로 돌아가기</a>
         </div>
@@ -141,16 +130,27 @@
 <script>
     const PRODUCT_ID   = {{ item.product_id | default('null') }};
     const PRODUCT_CODE = '{{ item.id }}';
-    const form         = document.getElementById('apply-form');
     const submitBtn    = document.getElementById('apply-submit-btn');
     const ctaBar       = document.getElementById('apply-cta-bar');
     const formWrap     = document.getElementById('apply-form-wrap');
     const resultWrap   = document.getElementById('apply-result-wrap');
 
+    const cbAll  = document.getElementById('agree_all');
+    const cbTerm = document.getElementById('agree_terms');
+    const cbPii  = document.getElementById('agree_pii');
+
+    function getSessionId() {
+        let sid = sessionStorage.getItem('ls_session_id');
+        if (!sid) {
+            sid = 'S-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+            sessionStorage.setItem('ls_session_id', sid);
+        }
+        return sid;
+    }
     function emitEvent(type, target) {
         const token = localStorage.getItem('ls_token');
         if (!token) return;
-        const body = { event_type: type, event_target: target };
+        const body = { event_type: type, event_target: target, session_id: getSessionId() };
         if (PRODUCT_ID) body.product_id = PRODUCT_ID;
         fetch('/api/event', {
             method: 'POST',
@@ -160,28 +160,43 @@
     }
     emitEvent('apply_view', '{{ item.name | e }}');
 
-    function validate() {
-        const name  = document.getElementById('applicant_name').value.trim();
-        const phone = document.getElementById('applicant_phone').value.trim();
-        const agree = document.getElementById('agree_terms').checked;
-        submitBtn.disabled = !(name && /^01[0-9]-?[0-9]{3,4}-?[0-9]{4}$/.test(phone) && agree);
+    // 로그인 사용자 정보 자동 표시
+    (async () => {
+        try {
+            const token = localStorage.getItem('ls_token');
+            if (!token) { window.location.href = '/login'; return; }
+            const r = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${token}` } });
+            const me = await r.json();
+            document.getElementById('applicant-name').textContent =
+                `${me.name || '회원'} · ${me.email || ''}`;
+        } catch (e) {
+            document.getElementById('applicant-name').textContent = '로그인 사용자';
+        }
+    })();
+
+    function refresh() {
+        // checked class 갱신
+        [['row-terms', cbTerm], ['row-pii', cbPii]].forEach(([rid, cb]) =>
+            document.getElementById(rid).classList.toggle('checked', cb.checked)
+        );
+        // all toggle 상태 — 필수 2개만
+        cbAll.checked = cbTerm.checked && cbPii.checked;
+        submitBtn.disabled = !(cbTerm.checked && cbPii.checked);
     }
-    form.addEventListener('input',  validate);
-    form.addEventListener('change', validate);
+    [cbTerm, cbPii].forEach(c => c.addEventListener('change', refresh));
+    cbAll.addEventListener('change', () => {
+        cbTerm.checked = cbAll.checked;
+        cbPii.checked  = cbAll.checked;
+        refresh();
+    });
+    refresh();
 
     submitBtn.addEventListener('click', async () => {
         const token = localStorage.getItem('ls_token');
         if (!token) { window.location.href = '/login'; return; }
         const payload = {
-            product_code:    PRODUCT_CODE,
-            product_id:      PRODUCT_ID,
-            applicant_name:  document.getElementById('applicant_name').value.trim(),
-            applicant_phone: document.getElementById('applicant_phone').value.trim(),
-            applicant_email: document.getElementById('applicant_email').value.trim(),
-            apply_amount:    document.getElementById('apply_amount').value.trim(),
-            contact_time:    document.getElementById('contact_time').value,
-            memo:            document.getElementById('memo').value.trim(),
-            agree_marketing: document.getElementById('agree_marketing').checked,
+            product_code: PRODUCT_CODE,
+            product_id:   PRODUCT_ID,
         };
         submitBtn.disabled = true;
         submitBtn.textContent = '제출 중...';

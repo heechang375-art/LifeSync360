@@ -240,7 +240,6 @@ if [ -z "$DB_PASSWORD" ] || [ "$DB_PASSWORD" = "null" ]; then
 
 fi
 
-
 ###############################################################################
 # DB NAME AUTO DETECT
 ###############################################################################
@@ -471,6 +470,21 @@ execute_sql "7.cross_sell_rule.sql"
 ###############################################################################
 
 execute_sql "8.campaign_master.sql"
+
+###############################################################################
+# STEP 10. CUSTOMER PRODUCT APPLICATION  (2026-05-17 ADDED)
+# DDL + FK + INDEX. FK references product_master(product_id).
+###############################################################################
+
+execute_sql "9.customer_product_application.sql"
+
+###############################################################################
+# STEP 11. CUSTOMER RECOMMEND DAILY MART  (2026-05-17 ADDED)
+# Daily aggregate mart for recommendation performance.
+# Adds idx_recommended_at on customer_recommend_history for batch GROUP BY.
+###############################################################################
+
+execute_sql "10.customer_recommend_daily.sql"
 
 ###############################################################################
 # COMPLETE

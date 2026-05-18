@@ -1,128 +1,76 @@
 {% extends 'base.html' %}
-{% block title %}Executive Dashboard – Admin{% endblock %}
-{% block page_title %}Executive Dashboard · 전체 현황{% endblock %}
+{% block title %}전체 현황 — Admin{% endblock %}
 
 {% block content %}
-<div class="detail-content">
+<div class="page-title">전체 현황 요약</div>
+<div class="page-sub">LifeSync360 플랫폼 KPI 및 클라우드 인프라 상태</div>
 
-    <!-- 상단 5 KPI (단일 값) — PPTX slide1 y=0 라인 -->
-    <div class="detail-section">
-        <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:8px;">
-            {% for k in kpi_top %}
-            <div class="card" style="padding:10px 12px; border-left:3px solid {{ k.color }};">
-                <div style="font-size:11px; color:#64748b;">{{ k.label }}</div>
-                <div style="font-size:22px; font-weight:700; color:{{ k.color }}; margin-top:4px;">{{ k.value }}</div>
-                <div style="font-size:10px; color:#94a3b8; margin-top:2px;">{{ k.sub }}</div>
-            </div>
-            {% endfor %}
+<!-- KPI CARDS — 고객 / 추천 누적 / 실시간 지표 (3×3 = 9, 설계서 V5) -->
+<section class="section">
+    <div class="section-title">📊 KPI CARDS <span class="pipe">|</span> <span class="sub">고객 / 추천 현황</span></div>
+    <div class="grid grid-3">
+        {% for k in kpi %}
+        <div class="kpi" style="border-left-color: {{ k.accent }};">
+            <div class="kpi-label">{{ k.label }}</div>
+            {% if k.is_status %}
+            <div class="kpi-value" style="font-size:20px; color: {{ k.accent }};">● {{ k.value }}</div>
+            {% else %}
+            <div class="kpi-value" style="color: {{ k.accent }};">{{ k.value }}</div>
+            {% endif %}
+            <div class="kpi-sub">{{ k.sub }}</div>
         </div>
+        {% endfor %}
     </div>
+</section>
 
-    <!-- 중단 4 KPI (단일 값) — PPTX slide1 y=2.8 라인 -->
-    <div class="detail-section">
-        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px;">
-            {% for k in kpi_mid %}
-            <div class="card" style="padding:10px 12px; border-left:3px solid {{ k.color }};">
-                <div style="font-size:11px; color:#64748b;">{{ k.label }}</div>
-                <div style="font-size:22px; font-weight:700; color:{{ k.color }}; margin-top:4px;">{{ k.value }}</div>
-                <div style="font-size:10px; color:#94a3b8; margin-top:2px;">{{ k.sub }}</div>
-            </div>
-            {% endfor %}
-        </div>
-    </div>
-
-    <!-- 메인 4 큰 박스 — PPTX slide1 y=5.4 라인 (AWS는 세로로 큼) -->
-    <div class="detail-section">
-        <div style="display:grid; grid-template-columns: 0.9fr 1.2fr 1.1fr 1.4fr; gap:8px; align-items:start;">
-
-            <!-- AWS 상태 박스 (세로로 가장 김, 6 서비스) -->
-            <div class="card" style="border-top:3px solid #f97316;">
-                <div class="card-title" style="color:#f97316;">▶ AWS 상태</div>
-                {% for s in aws_status %}
-                <div style="padding:6px 0; border-bottom:1px solid #f1f5f9;">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-size:12px; font-weight:600;">{{ s.service }}</span>
-                        <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; color:#fff; background:{% if s.state == 'UP' %}#16a34a{% else %}#dc2626{% endif %};">● {{ s.state }}</span>
-                    </div>
-                    <div style="font-size:11px; color:#475569;">{{ s.metric }}</div>
-                    <div style="font-size:10px; color:#94a3b8; font-family:monospace;">{{ s.detail }}</div>
-                </div>
-                {% endfor %}
-            </div>
-
-            <!-- GCP 상태 박스 -->
-            <div class="card" style="border-top:3px solid #3b82f6;">
-                <div class="card-title" style="color:#3b82f6;">▶ GCP 상태</div>
-                {% for s in gcp_status %}
-                <div style="padding:6px 0; border-bottom:1px solid #f1f5f9;">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-size:12px; font-weight:600;">{{ s.service }}</span>
-                        <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; color:#fff; background:#3b82f6;">● {{ s.state }}</span>
-                    </div>
-                    <div style="font-size:11px; color:#475569;">{{ s.metric }}</div>
-                    <div style="font-size:10px; color:#94a3b8; font-family:monospace;">{{ s.detail }}</div>
-                </div>
-                {% endfor %}
-            </div>
-
-            <!-- S3 적재 상세 박스 -->
-            <div class="card" style="border-top:3px solid #14b8a6;">
-                <div class="card-title" style="color:#14b8a6;">S3 적재 상세</div>
-                {% for r in s3_box %}
-                <div style="padding:6px 0; border-bottom:1px solid #f1f5f9;">
-                    <div style="font-size:11px; color:#64748b;">{{ r.label }}</div>
-                    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:2px;">
-                        <span style="font-size:16px; font-weight:700; color:#1e293b;">{{ r.value }}</span>
-                        <span style="font-size:10px; color:#94a3b8; font-family:monospace;">{{ r.note }}</span>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-
-            <!-- 플랫폼 가입률 박스 (전체 + 5 연령별) -->
-            <div class="card" style="border-top:3px solid #6366f1;">
-                <div class="card-title" style="color:#6366f1;">플랫폼 가입률</div>
-                <div style="padding:6px 0; border-bottom:2px solid #e2e8f0; margin-bottom:6px;">
-                    <div style="font-size:11px; color:#64748b;">전체</div>
-                    <div style="font-size:28px; font-weight:700; color:#6366f1;">{{ signup_box.overall }}%</div>
-                </div>
-                {% for r in signup_box.by_age %}
-                <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;">
-                    <span style="width:50px; font-size:11px; font-weight:600;">{{ r.age }}</span>
-                    <div style="flex:1; background:#f1f5f9; border-radius:4px; height:10px;">
-                        <div style="height:100%; background:#6366f1; width:{{ r.signup_rate }}%; border-radius:4px;"></div>
-                    </div>
-                    <span class="mono" style="font-size:11px; width:48px; text-align:right; color:#6366f1; font-weight:700;">{{ r.signup_rate }}%</span>
-                    <span class="mono" style="font-size:10px; width:55px; text-align:right; color:#94a3b8;">{{ '{:,}'.format(r.count) }}</span>
-                </div>
-                {% endfor %}
-            </div>
-
-        </div>
-    </div>
-
-    <!-- 하단 — 최근 업로드 파일 리스트 (PPTX 14.1 x 4.4cm 큰 박스) -->
-    <div class="detail-section">
-        <div class="card">
-            <div class="card-title">최근 업로드 파일</div>
-            <div class="table-wrap">
-                <table style="font-size:12px;">
-                    <thead><tr><th>시각</th><th>파일</th><th>크기</th><th>소스</th><th>상태</th></tr></thead>
-                    <tbody>
-                        {% for u in recent_uploads %}
-                        <tr>
-                            <td class="mono">{{ u.time }}</td>
-                            <td style="font-family:monospace; font-size:11px;">{{ u.file }}</td>
-                            <td class="mono">{{ u.size }}</td>
-                            <td style="font-size:11px; color:#64748b;">{{ u.source }}</td>
-                            <td><strong style="color:{% if u.state == 'OK' %}#16a34a{% else %}#dc2626{% endif %};">● {{ u.state }}</strong></td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+<!-- CLOUD STATUS — 상태 요약 (3카드) -->
+<section class="section">
+    <div class="section-title">☁️ CLOUD STATUS <span class="pipe">|</span> <span class="sub">상태 요약</span></div>
+    <div class="grid grid-3">
+        {% for c in cloud3 %}
+        <div class="cloud-card">
+            <div class="cloud-badge" style="background: {{ c.badge_bg }}; color: {{ c.badge_color }};">{{ c.badge }}</div>
+            <div class="cloud-body">
+                <div class="cloud-title">{{ c.title }}</div>
+                <div class="cloud-state"><span class="dot"></span> {{ c.state }}</div>
+                <div class="cloud-sub">{{ c.sub }}</div>
             </div>
         </div>
+        {% endfor %}
     </div>
+</section>
 
-</div>
+<!-- S3 INGESTION — 데이터 적재 현황 (5카드) -->
+<section class="section">
+    <div class="section-title">📦 S3 INGESTION <span class="pipe">|</span> <span class="sub">데이터 적재 현황</span></div>
+    <div class="grid grid-5">
+        {% for s in s3_cards %}
+        <div class="s3-card">
+            <div class="s3-icon">{{ s.icon }}</div>
+            <div class="s3-label">{{ s.label }}</div>
+            <div class="s3-value">{{ s.value }}</div>
+            <div class="s3-note">{{ s.note }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<!-- 최근 업로드 파일 (S3 EventBridge) -->
+<section class="section">
+    <div class="section-title">최근 업로드 파일 (S3 EventBridge)</div>
+    <div class="table-wrap">
+        <table>
+            <tbody>
+                {% for u in uploads %}
+                <tr>
+                    <td class="mono" style="width:90px;">{{ u.time }}</td>
+                    <td class="mono" style="color:#1e293b;">{{ u.file }}</td>
+                    <td style="width:80px; text-align:right;"><span class="pill" style="background:{{ u.badge_bg }}; color:{{ u.badge_color }};">{{ u.badge }}</span></td>
+                    <td class="mono" style="width:80px; text-align:right;">{{ u.size }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
 {% endblock %}

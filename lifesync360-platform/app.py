@@ -4,6 +4,7 @@ import hashlib
 import uuid
 import json as _json
 from datetime import timezone
+from functools import wraps
 import jwt
 import redis
 import boto3
@@ -208,6 +209,20 @@ def decode_jwt(token):
     return jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
 
 
+def require_jwt(f):
+    """Authorization Bearer 검증 + payload 를 함수 kwarg 'payload' 로 주입."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        auth  = request.headers.get('Authorization', '')
+        token = auth.removeprefix('Bearer ').strip()
+        try:
+            kwargs['payload'] = decode_jwt(token)
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'invalid token'}), 401
+        return f(*args, **kwargs)
+    return wrapper
+
+
 # ── API ──────────────────────────────────────────────
 @app.route('/api/register', methods=['POST'])
 def api_register():
@@ -232,101 +247,87 @@ def api_login():
 
 
 @app.route('/api/me')
-def api_me():
-    auth  = request.headers.get('Authorization', '')
-    token = auth.removeprefix('Bearer ').strip()
-    try:
-        payload = decode_jwt(token)
-
-        if USE_MOCK:
-            user = next((u for u in MOCK_USERS.values() if u['ls_user_id'] == payload['sub']), None)
-            if not user:
-                return jsonify({'error': 'user not found'}), 404
-            return jsonify({
-                'ls_user_id': payload['sub'],
-                'global_id':  payload['gid'],
-                'name':       user['name'],
-                'grade':      user['grade'],
-                'email':      user['email'],
-                # 인구통계 (customer_360_profile)
-                'gender':        user.get('gender'),
-                'age_band':      user.get('age_band'),
-                'region':        user.get('region'),
-                'income_grade':  user.get('income_grade'),
-                'asset_grade':   user.get('asset_grade'),
-                'wearable_flag': user.get('wearable_flag'),
-                # 마스터 (master_customer)
-                'customer_status':  user.get('customer_status'),
-                'vip_grade':        user.get('vip_grade'),
-                'customer_type':    user.get('customer_type'),
-                'first_created_dt': user.get('first_created_dt'),
-                'last_login_dt':    user.get('last_login_dt'),
-            })
-
-        # Mock 유저 fallback 준비 (Lambda 미배포 검증용)
-        _mock_user = next((u for u in MOCK_USERS.values() if u['ls_user_id'] == payload['sub']), None)
-
-        login_email = None
-        global_id   = payload['gid']
-        try:
-            user = _call_onprem('get_user', ls_user_id=payload['sub'])
-            login_email = user.get('login_email')
-            global_id   = user.get('global_id', global_id)
-        except Exception:
-            if _mock_user:
-                login_email = _mock_user.get('email')
-
-        grade = None
-        try:
-            item  = get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item', {})
-            grade = item.get('dynamic_grade')
-        except Exception:
-            pass
-
-        onprem = None
-        try:
-            onprem = _call_onprem('get_all', global_id=global_id)
-        except Exception:
-            pass
-
-        consents = onprem.get('consents', []) if onprem else []
-        profile  = ((onprem or {}).get('customer') or {}).get('profile') or {}
-
-        name = None
-        try:
-            pii  = _call_onprem('get_pii', global_id=global_id)
-            name = pii.get('name')
-        except Exception:
-            if _mock_user:
-                name = _mock_user.get('name')
-
+@require_jwt
+def api_me(payload):
+    if USE_MOCK:
+        user = next((u for u in MOCK_USERS.values() if u['ls_user_id'] == payload['sub']), None)
+        if not user:
+            return jsonify({'error': 'user not found'}), 404
         return jsonify({
             'ls_user_id': payload['sub'],
-            'global_id':  global_id,
-            'name':       name,
-            'grade':      grade,
-            'email':      login_email,
-            'consents':   consents,
-            'profile':    profile,
+            'global_id':  payload['gid'],
+            'name':       user['name'],
+            'grade':      user['grade'],
+            'email':      user['email'],
+            # 인구통계 (customer_360_profile)
+            'gender':        user.get('gender'),
+            'age_band':      user.get('age_band'),
+            'region':        user.get('region'),
+            'income_grade':  user.get('income_grade'),
+            'asset_grade':   user.get('asset_grade'),
+            'wearable_flag': user.get('wearable_flag'),
+            # 마스터 (master_customer)
+            'customer_status':  user.get('customer_status'),
+            'vip_grade':        user.get('vip_grade'),
+            'customer_type':    user.get('customer_type'),
+            'first_created_dt': user.get('first_created_dt'),
+            'last_login_dt':    user.get('last_login_dt'),
         })
 
-    except jwt.ExpiredSignatureError:
-        return jsonify({'error': 'token expired'}), 401
-    except jwt.InvalidTokenError:
-        return jsonify({'error': 'invalid token'}), 401
+    # Mock 유저 fallback 준비 (Lambda 미배포 검증용)
+    _mock_user = next((u for u in MOCK_USERS.values() if u['ls_user_id'] == payload['sub']), None)
+
+    login_email = None
+    global_id   = payload['gid']
+    try:
+        user = _call_onprem('get_user', ls_user_id=payload['sub'])
+        login_email = user.get('login_email')
+        global_id   = user.get('global_id', global_id)
+    except Exception:
+        if _mock_user:
+            login_email = _mock_user.get('email')
+
+    grade = None
+    try:
+        item  = get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item', {})
+        grade = item.get('dynamic_grade')
+    except Exception:
+        pass
+
+    onprem = None
+    try:
+        onprem = _call_onprem('get_all', global_id=global_id)
+    except Exception:
+        pass
+
+    consents = onprem.get('consents', []) if onprem else []
+    profile  = ((onprem or {}).get('customer') or {}).get('profile') or {}
+
+    name = None
+    try:
+        pii  = _call_onprem('get_pii', global_id=global_id)
+        name = pii.get('name')
+    except Exception:
+        if _mock_user:
+            name = _mock_user.get('name')
+
+    return jsonify({
+        'ls_user_id': payload['sub'],
+        'global_id':  global_id,
+        'name':       name,
+        'grade':      grade,
+        'email':      login_email,
+        'consents':   consents,
+        'profile':    profile,
+    })
+
 
 
 @app.route('/api/consent', methods=['POST'])
-def api_consent():
+@require_jwt
+def api_consent(payload):
     if USE_MOCK:
         return jsonify({'status': 'ok'})
-
-    auth  = request.headers.get('Authorization', '')
-    token = auth.removeprefix('Bearer ').strip()
-    try:
-        payload = decode_jwt(token)
-    except jwt.InvalidTokenError:
-        return jsonify({'error': 'invalid token'}), 401
 
     consents = request.get_json().get('consents', [])
     try:
@@ -337,42 +338,65 @@ def api_consent():
 
 
 @app.route('/api/event', methods=['POST'])
-def api_event():
-    auth  = request.headers.get('Authorization', '')
-    token = auth.removeprefix('Bearer ').strip()
-    try:
-        payload = decode_jwt(token)
-    except jwt.InvalidTokenError:
-        return jsonify({'error': 'invalid token'}), 401
+@require_jwt
+def api_event(payload):
+    """
+    클라이언트 이벤트 적재:
+      ① customer_dashboard_log INSERT (모든 event_type) — page_type/banner_click/product_click 분기
+      ② customer_recommend_history UPDATE (recommendation_click → clicked_flag,
+                                            apply_submitted/purchased → purchased_flag)
 
+    event_type 매핑:
+      recommendation_click → MAIN  + product_click='Y' + history.clicked_flag='Y'
+      product_view         → DETAIL + product_click='Y'
+      apply_view           → DETAIL
+      apply_started        → DETAIL + product_click='Y'
+      apply_submitted      → DETAIL + product_click='Y' + history.purchased_flag='Y'
+      purchased            → (legacy) history.purchased_flag='Y'
+      banner_click         → MAIN  + banner_click='Y'
+      tab_click            → MAIN
+    """
     if USE_MOCK:
         return jsonify({'status': 'ok'})
 
-    data         = request.get_json() or {}
-    event_type   = data.get('event_type', '')
-    product_id   = data.get('product_id')      # Service-DB BIGINT product_id
-    global_id    = payload['gid']
+    data        = request.get_json() or {}
+    event_type  = data.get('event_type', '')
+    product_id  = data.get('product_id')
+    session_id  = (data.get('session_id') or '')[:100]
+    global_id   = payload['gid']
 
-    # product_id 없는 이벤트(tab_click 등) 또는 Aurora 미설정 환경 안전 처리
-    if not product_id:
-        return jsonify({'status': 'ok'})
+    # 분기 매핑
+    detail_events = {'product_view', 'apply_view', 'apply_started', 'apply_submitted'}
+    page_type     = 'DETAIL' if event_type in detail_events else 'MAIN'
+    banner_click  = 'Y' if event_type == 'banner_click' else 'N'
+    product_click = 'Y' if event_type in ('recommendation_click', 'product_view',
+                                          'apply_started', 'apply_submitted') else 'N'
 
     try:
         db = get_db()
         try:
             with db.cursor() as cur:
-                if event_type == 'recommendation_click':
-                    cur.execute(
-                        'UPDATE customer_recommend_history SET clicked_flag = %s '
-                        'WHERE global_id = %s AND product_id = %s AND clicked_flag = %s LIMIT 1',
-                        ('Y', global_id, product_id, 'N')
-                    )
-                elif event_type == 'purchased':
-                    cur.execute(
-                        'UPDATE customer_recommend_history SET purchased_flag = %s '
-                        'WHERE global_id = %s AND product_id = %s AND purchased_flag = %s LIMIT 1',
-                        ('Y', global_id, product_id, 'N')
-                    )
+                # ① customer_dashboard_log INSERT
+                cur.execute(
+                    "INSERT INTO customer_dashboard_log "
+                    "(global_id, page_type, banner_click, product_click, click_product_id, session_id, view_time) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, NOW())",
+                    (global_id, page_type, banner_click, product_click, product_id, session_id)
+                )
+                # ② customer_recommend_history UPDATE (product_id 있을 때만)
+                if product_id:
+                    if event_type == 'recommendation_click':
+                        cur.execute(
+                            "UPDATE customer_recommend_history SET clicked_flag='Y' "
+                            "WHERE global_id=%s AND product_id=%s AND clicked_flag='N' LIMIT 1",
+                            (global_id, product_id)
+                        )
+                    elif event_type in ('apply_submitted', 'purchased'):
+                        cur.execute(
+                            "UPDATE customer_recommend_history SET purchased_flag='Y' "
+                            "WHERE global_id=%s AND product_id=%s AND purchased_flag='N' LIMIT 1",
+                            (global_id, product_id)
+                        )
             db.commit()
         finally:
             db.close()
@@ -381,8 +405,208 @@ def api_event():
     return jsonify({'status': 'ok'})
 
 
+# NBA → recommend_rule.action_code 매핑 (results.csv 의 next_best_action 컬럼 기준)
+_NBA_TO_ACTION = {
+    'RETENTION':         'RECOMMEND_HEALTH',
+    'INSURANCE_UPSELL':  'RECOMMEND_INSURANCE',
+    'HEALTH_SERVICE':    'RECOMMEND_HEALTH_INS',
+    'HEALTH_INS':        'RECOMMEND_HEALTH_INS',
+    'PB':                'RECOMMEND_PB',
+    'WM':                'RECOMMEND_WM',
+    'INVEST':            'RECOMMEND_INVEST',
+    'SAVING':            'RECOMMEND_SAVING',
+    'CARD':              'RECOMMEND_CARD',
+    'LOAN':              'RECOMMEND_LOAN',
+    'PENSION':           'RECOMMEND_PENSION',
+    'WELLNESS':          'RECOMMEND_WELLNESS',
+    'TELEMED':           'RECOMMEND_TELEMED',
+}
+
+
+def _recommendations_mock():
+    flat = []
+    for rec in MOCK_RECOMMENDATIONS:
+        for p in rec.get('products', []):
+            flat.append({
+                'product_id'   : p.get('id'),
+                'product_code' : p.get('id'),
+                'product_name' : p.get('name'),
+                'description'  : p.get('desc', ''),
+                'category_code': (rec.get('key') or '').upper(),
+                'category_name': rec.get('name', ''),
+                'company_code' : (rec.get('key') or '').upper(),
+                'company_name' : rec.get('name', ''),
+                'risk_level'   : p.get('tag', ''),
+                'target_grade' : p.get('type', ''),
+                'priority_rank': 0,
+            })
+    flat = flat[:20]
+    for i, p in enumerate(flat):
+        p['reason']               = f'VIP 등급 + {p.get("category_name","")} 카테고리 매칭'
+        p['rec_rank']             = i + 1
+        p['recommendation_score'] = max(60, 95 - i * 4)
+    return {
+        'meta'    : {'grade': 'VIP', 'score': 90.0, 'health': 88.0,
+                     'vip_prob': 0.85, 'next_best_action': 'PB'},
+        'products': flat,
+    }
+
+
+def _fetch_ddb_meta(global_id):
+    """DDB lifesync_customer_result → (grade, dynamic_score, health_score, vip_prob, nba)"""
+    try:
+        item = get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item', {})
+        return (
+            item.get('dynamic_grade', 'BASIC'),
+            float(item.get('dynamic_score') or 0),
+            float(item.get('health_score')  or 0),
+            float(item.get('vip_prob')      or 0),
+            item.get('next_best_action'),
+        )
+    except Exception:
+        return 'BASIC', 0.0, 0.0, 0.0, None
+
+
+def _fetch_redis_cached_ids(global_id):
+    try:
+        c = get_redis().get(f'rec:{global_id}')
+        if c:
+            return _json.loads(c)
+    except Exception:
+        pass
+    return None
+
+
+def _match_rules(cur, grade, dynamic_score, health_score, vip_required_flag, target_action):
+    """recommend_rule + cross_sell_rule → (cat_list, rule_action_by_cat)"""
+    cur.execute("""
+        SELECT category_code, action_code, priority_rank
+        FROM recommend_rule
+        WHERE active_flag = 'Y'
+          AND target_grade = %s
+          AND %s BETWEEN min_score AND max_score
+          AND (vip_required = 'N' OR vip_required = %s)
+          AND (health_min_score IS NULL OR %s >= health_min_score)
+        ORDER BY
+          CASE WHEN action_code = %s THEN 0 ELSE 1 END,
+          priority_rank
+    """, (grade, dynamic_score, vip_required_flag, health_score, target_action or ''))
+    rule_rows = cur.fetchall()
+    rule_action_by_cat = {r['category_code']: r['action_code'] for r in rule_rows}
+
+    cross_cats = []
+    if rule_rows:
+        cur.execute("""
+            SELECT target_category FROM cross_sell_rule
+            WHERE base_category = %s AND active_flag = 'Y'
+            ORDER BY priority_rank LIMIT 3
+        """, (rule_rows[0]['category_code'],))
+        cross_cats = [r['target_category'] for r in cur.fetchall()]
+
+    seen = set()
+    cat_list = []
+    for c in [r['category_code'] for r in rule_rows] + cross_cats:
+        if c not in seen:
+            seen.add(c); cat_list.append(c)
+    for c in cross_cats:
+        rule_action_by_cat.setdefault(c, 'RECOMMEND_CROSS_SELL')
+
+    return cat_list, rule_action_by_cat
+
+
+def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade):
+    """3 모드: cache hit → id 조회 / category 매칭 → top2*N / fallback → score 기반 LIMIT 20."""
+    if cached_ids:
+        placeholders = ', '.join(['%s'] * len(cached_ids))
+        cur.execute(f"""
+            SELECT p.product_id, p.product_code, p.product_name, p.description,
+                   p.target_grade, p.risk_level, p.priority_rank,
+                   c.company_code, c.company_name, cat.category_code, cat.category_name
+            FROM product_master p
+            JOIN company_master   c   ON p.company_id  = c.company_id
+            JOIN category_master  cat ON p.category_id = cat.category_id
+            WHERE p.product_id IN ({placeholders}) AND p.active_flag = 'Y'
+            ORDER BY p.priority_rank
+        """, cached_ids)
+        return cur.fetchall()
+
+    products = []
+    if cat_list:
+        cat_placeholders = ', '.join(['%s'] * len(cat_list))
+        cur.execute(f"""
+            SELECT p.product_id, p.product_code, p.product_name, p.description,
+                   p.target_grade, p.risk_level, p.priority_rank,
+                   c.company_code, c.company_name, cat.category_code, cat.category_name,
+                   ROW_NUMBER() OVER (PARTITION BY cat.category_code ORDER BY p.priority_rank) AS rn
+            FROM product_master p
+            JOIN company_master   c   ON p.company_id  = c.company_id
+            JOIN category_master  cat ON p.category_id = cat.category_id
+            WHERE p.active_flag = 'Y'
+              AND cat.category_code IN ({cat_placeholders})
+              AND p.min_score <= %s
+            ORDER BY FIELD(cat.category_code, {cat_placeholders}), p.priority_rank
+        """, cat_list + [dynamic_score] + cat_list)
+        for r in cur.fetchall():
+            if r['rn'] <= 2:
+                r.pop('rn', None)
+                products.append(r)
+            if len(products) >= 20:
+                break
+
+    if not products:
+        min_score = GRADE_SCORE_MAP.get(grade, 60)
+        cur.execute("""
+            SELECT p.product_id, p.product_code, p.product_name, p.description,
+                   p.target_grade, p.risk_level, p.priority_rank,
+                   c.company_code, c.company_name, cat.category_code, cat.category_name
+            FROM product_master p
+            JOIN company_master   c   ON p.company_id  = c.company_id
+            JOIN category_master  cat ON p.category_id = cat.category_id
+            WHERE p.active_flag = 'Y' AND p.min_score <= %s
+            ORDER BY p.priority_rank LIMIT 20
+        """, (min_score,))
+        products = cur.fetchall()
+
+    return products
+
+
+def _enrich_and_record(cur, products, global_id, grade, dynamic_score, health_score,
+                       vip_required_flag, target_action, nba, rule_action_by_cat):
+    """reason/rec_rank/score 부여 + customer_recommend_history INSERT + 점수 내림차순 재정렬."""
+    now = datetime.datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    for i, p in enumerate(products):
+        action = rule_action_by_cat.get(p.get('category_code'), 'RECOMMEND_DASHBOARD')
+        reason_parts = []
+        if target_action and action == target_action:
+            reason_parts.append(f'NBA "{nba}" 매칭')
+        reason_parts.append(f'{grade} 등급')
+        if action == 'RECOMMEND_CROSS_SELL':
+            reason_parts.append('cross_sell 보강')
+        if vip_required_flag == 'Y':
+            reason_parts.append('VIP 후보')
+        if health_score and any(kw in (action or '') for kw in ('HEALTH','WELLNESS','TELEMED')):
+            reason_parts.append(f'건강점수 {int(health_score)}점')
+        p['reason']   = ' · '.join(reason_parts) if reason_parts else f'{p.get("category_name","")} 카테고리 매칭'
+        p['rec_rank'] = i + 1
+        base        = max(0, 30 - p.get('priority_rank', 10))
+        grade_bonus = {'VIP':25,'GOLD':20,'SILVER':15,'BASIC':10,'CARE':10}.get(grade, 10)
+        nba_bonus   = 20 if (target_action and action == target_action) else 0
+        cross_bonus = -5 if action == 'RECOMMEND_CROSS_SELL' else 0
+        p['recommendation_score'] = base + grade_bonus + nba_bonus + cross_bonus
+        cur.execute(
+            '''INSERT INTO customer_recommend_history
+               (global_id, product_id, dynamic_score, dynamic_grade, action_code, recommended_at)
+               VALUES (%s, %s, %s, %s, %s, %s)''',
+            (global_id, p['product_id'], dynamic_score, grade, action, now)
+        )
+    products.sort(key=lambda x: -x.get('recommendation_score', 0))
+    for i, p in enumerate(products):
+        p['rec_rank'] = i + 1
+
+
 @app.route('/api/recommendations')
-def api_recommendations():
+@require_jwt
+def api_recommendations(payload):
     """
     추천 흐름 (Service-DB recommend_rule + cross_sell_rule + results.csv NBA):
       ① DDB lifesync_customer_result → dynamic_grade / score / health / vip_prob / NBA
@@ -393,197 +617,45 @@ def api_recommendations():
       ⑤ category별 product_master 매칭 (각 카테고리당 top 2, 합쳐서 LIMIT 20)
       ⑥ customer_recommend_history INSERT + Redis 캐시 갱신
     """
-    auth  = request.headers.get('Authorization', '')
-    token = auth.removeprefix('Bearer ').strip()
-    try:
-        payload = decode_jwt(token)
-    except jwt.InvalidTokenError:
-        return jsonify({'error': 'invalid token'}), 401
-
     if USE_MOCK:
-        # 구 그룹 형식 (MOCK_RECOMMENDATIONS = [{id,name,products:[{id,name,...}]}, ...]) →
-        # 신규 형식 {meta, products[flat]} 변환 (프론트 호환)
-        flat = []
-        for rec in MOCK_RECOMMENDATIONS:
-            for p in rec.get('products', []):
-                flat.append({
-                    'product_id'   : p.get('id'),
-                    'product_code' : p.get('id'),
-                    'product_name' : p.get('name'),
-                    'description'  : p.get('desc', ''),
-                    'category_code': (rec.get('key') or '').upper(),
-                    'category_name': rec.get('name', ''),
-                    'company_code' : (rec.get('key') or '').upper(),
-                    'company_name' : rec.get('name', ''),
-                    'risk_level'   : p.get('tag', ''),
-                    'target_grade' : p.get('type', ''),
-                    'priority_rank': 0,
-                })
-        return jsonify({
-            'meta'    : {'grade': 'VIP', 'score': 90.0, 'health': 88.0,
-                         'vip_prob': 0.85, 'next_best_action': 'PB'},
-            'products': flat[:20],
-        })
+        return jsonify(_recommendations_mock())
 
     global_id = payload['gid']
+    grade, dynamic_score, health_score, vip_prob, nba = _fetch_ddb_meta(global_id)
+    cached_ids = _fetch_redis_cached_ids(global_id)
 
-    # ① DDB
-    grade, dynamic_score, health_score, vip_prob, nba = 'BASIC', 0.0, 0.0, 0.0, None
-    try:
-        item = get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item', {})
-        grade         = item.get('dynamic_grade', 'BASIC')
-        dynamic_score = float(item.get('dynamic_score') or 0)
-        health_score  = float(item.get('health_score')  or 0)
-        vip_prob      = float(item.get('vip_prob')      or 0)
-        nba           = item.get('next_best_action')
-    except Exception:
-        pass
-
-    # ② Redis cache (hit → 즉시 반환)
-    cached_ids = None
-    try:
-        c = get_redis().get(f'rec:{global_id}')
-        if c:
-            cached_ids = _json.loads(c)
-    except Exception:
-        pass
-
-    # NBA → recommend_rule.action_code 매핑 (results.csv 의 next_best_action 컬럼 기준)
-    nba_to_action = {
-        'RETENTION':         'RECOMMEND_HEALTH',
-        'INSURANCE_UPSELL':  'RECOMMEND_INSURANCE',
-        'HEALTH_SERVICE':    'RECOMMEND_HEALTH_INS',
-        'HEALTH_INS':        'RECOMMEND_HEALTH_INS',
-        'PB':                'RECOMMEND_PB',
-        'WM':                'RECOMMEND_WM',
-        'INVEST':            'RECOMMEND_INVEST',
-        'SAVING':            'RECOMMEND_SAVING',
-        'CARD':              'RECOMMEND_CARD',
-        'LOAN':              'RECOMMEND_LOAN',
-        'PENSION':           'RECOMMEND_PENSION',
-        'WELLNESS':          'RECOMMEND_WELLNESS',
-        'TELEMED':           'RECOMMEND_TELEMED',
-    }
-    target_action = nba_to_action.get(str(nba or '').upper())
+    target_action     = _NBA_TO_ACTION.get(str(nba or '').upper())
     # vip_required 임계 — 운영 데이터 분포에 따라 환경변수로 조정 (results.csv 보면 0.5~0.58 분기)
-    _vip_th = float(os.environ.get('VIP_PROB_THRESHOLD', '0.5'))
+    _vip_th           = float(os.environ.get('VIP_PROB_THRESHOLD', '0.5'))
     vip_required_flag = 'Y' if vip_prob >= _vip_th else 'N'
 
     db = get_db()
     try:
         with db.cursor() as cur:
             if cached_ids:
-                placeholders = ', '.join(['%s'] * len(cached_ids))
-                cur.execute(f"""
-                    SELECT p.product_id, p.product_code, p.product_name, p.description,
-                           p.target_grade, p.risk_level, p.priority_rank,
-                           c.company_code, c.company_name, cat.category_code, cat.category_name
-                    FROM product_master p
-                    JOIN company_master   c   ON p.company_id  = c.company_id
-                    JOIN category_master  cat ON p.category_id = cat.category_id
-                    WHERE p.product_id IN ({placeholders}) AND p.active_flag = 'Y'
-                    ORDER BY p.priority_rank
-                """, cached_ids)
-                products = cur.fetchall()
-                rule_action_by_cat = {}
+                cat_list, rule_action_by_cat = [], {}
             else:
-                # ③ recommend_rule 매칭 — NBA 매칭된 action_code 우선 정렬
-                cur.execute("""
-                    SELECT category_code, action_code, priority_rank
-                    FROM recommend_rule
-                    WHERE active_flag = 'Y'
-                      AND target_grade = %s
-                      AND %s BETWEEN min_score AND max_score
-                      AND (vip_required = 'N' OR vip_required = %s)
-                      AND (health_min_score IS NULL OR %s >= health_min_score)
-                    ORDER BY
-                      CASE WHEN action_code = %s THEN 0 ELSE 1 END,
-                      priority_rank
-                """, (grade, dynamic_score, vip_required_flag, health_score, target_action or ''))
-                rule_rows = cur.fetchall()
-                rule_action_by_cat = {r['category_code']: r['action_code'] for r in rule_rows}
-
-                # ④ cross_sell_rule 보강 — 첫 category → target_category 3개
-                cross_cats = []
-                if rule_rows:
-                    cur.execute("""
-                        SELECT target_category FROM cross_sell_rule
-                        WHERE base_category = %s AND active_flag = 'Y'
-                        ORDER BY priority_rank LIMIT 3
-                    """, (rule_rows[0]['category_code'],))
-                    cross_cats = [r['target_category'] for r in cur.fetchall()]
-
-                # 중복 제거 (순서 유지)
-                seen = set()
-                cat_list = []
-                for c in [r['category_code'] for r in rule_rows] + cross_cats:
-                    if c not in seen:
-                        seen.add(c); cat_list.append(c)
-                # cross_sell 로 추가된 카테고리 action_code 채움
-                for c in cross_cats:
-                    rule_action_by_cat.setdefault(c, 'RECOMMEND_CROSS_SELL')
-
-                # ⑤ category별 product_master — 각 카테고리당 top 2, 전체 LIMIT 20
-                products = []
-                if cat_list:
-                    cat_placeholders = ', '.join(['%s'] * len(cat_list))
-                    cur.execute(f"""
-                        SELECT p.product_id, p.product_code, p.product_name, p.description,
-                               p.target_grade, p.risk_level, p.priority_rank,
-                               c.company_code, c.company_name, cat.category_code, cat.category_name,
-                               ROW_NUMBER() OVER (PARTITION BY cat.category_code ORDER BY p.priority_rank) AS rn
-                        FROM product_master p
-                        JOIN company_master   c   ON p.company_id  = c.company_id
-                        JOIN category_master  cat ON p.category_id = cat.category_id
-                        WHERE p.active_flag = 'Y'
-                          AND cat.category_code IN ({cat_placeholders})
-                          AND p.min_score <= %s
-                        ORDER BY FIELD(cat.category_code, {cat_placeholders}), p.priority_rank
-                    """, cat_list + [dynamic_score] + cat_list)
-                    for r in cur.fetchall():
-                        if r['rn'] <= 2:
-                            r.pop('rn', None)
-                            products.append(r)
-                        if len(products) >= 20:
-                            break
-
-                # fallback: rule 매칭 0건 → score 기반 단순 매칭 (기존 로직 유지)
-                if not products:
-                    min_score = GRADE_SCORE_MAP.get(grade, 60)
-                    cur.execute("""
-                        SELECT p.product_id, p.product_code, p.product_name, p.description,
-                               p.target_grade, p.risk_level, p.priority_rank,
-                               c.company_code, c.company_name, cat.category_code, cat.category_name
-                        FROM product_master p
-                        JOIN company_master   c   ON p.company_id  = c.company_id
-                        JOIN category_master  cat ON p.category_id = cat.category_id
-                        WHERE p.active_flag = 'Y' AND p.min_score <= %s
-                        ORDER BY p.priority_rank LIMIT 20
-                    """, (min_score,))
-                    products = cur.fetchall()
-
-            # ⑥ history INSERT + Redis 캐시 갱신 (cache hit 시 INSERT만)
-            now = datetime.datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-            for p in products:
-                action = rule_action_by_cat.get(p.get('category_code'), 'RECOMMEND_DASHBOARD')
-                cur.execute(
-                    '''INSERT INTO customer_recommend_history
-                       (global_id, product_id, dynamic_score, dynamic_grade, action_code, recommended_at)
-                       VALUES (%s, %s, %s, %s, %s, %s)''',
-                    (global_id, p['product_id'], dynamic_score, grade, action, now)
+                cat_list, rule_action_by_cat = _match_rules(
+                    cur, grade, dynamic_score, health_score, vip_required_flag, target_action,
                 )
+            products = _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade)
+            _enrich_and_record(
+                cur, products, global_id, grade, dynamic_score, health_score,
+                vip_required_flag, target_action, nba, rule_action_by_cat,
+            )
         db.commit()
     finally:
         db.close()
 
     if not cached_ids and products:
         try:
-            r = get_redis()
-            r.setex(f'rec:{global_id}', 21600, _json.dumps([p['product_id'] for p in products]))
+            get_redis().setex(
+                f'rec:{global_id}', 21600,
+                _json.dumps([p['product_id'] for p in products]),
+            )
         except Exception:
             pass
 
-    # nba/grade/score 메타 같이 반환 (프론트 헤더 표기용)
     return jsonify({
         'meta'    : {'grade': grade, 'score': dynamic_score, 'health': health_score,
                      'vip_prob': vip_prob, 'next_best_action': nba},
@@ -592,29 +664,59 @@ def api_recommendations():
 
 
 @app.route('/api/upgrade-actions')
-def api_upgrade_actions():
-    auth  = request.headers.get('Authorization', '')
-    token = auth.removeprefix('Bearer ').strip()
-    try:
-        payload = decode_jwt(token)
-    except jwt.InvalidTokenError:
-        return jsonify({'error': 'invalid token'}), 401
-
+@require_jwt
+def api_upgrade_actions(payload):
     if USE_MOCK:
         return jsonify(get_mock_upgrade_actions(payload['sub']))
 
     return jsonify([])
 
 
-@app.route('/api/my-products')
-def api_my_products():
-    auth  = request.headers.get('Authorization', '')
-    token = auth.removeprefix('Bearer ').strip()
-    try:
-        payload = decode_jwt(token)
-    except jwt.InvalidTokenError:
-        return jsonify({'error': 'invalid token'}), 401
+@app.route('/api/my-applications')
+@require_jwt
+def api_my_applications(payload):
+    """
+    내 신청 내역 — customer_product_application + product/company JOIN.
+    status (RECEIVED/IN_REVIEW/APPROVED/REJECTED/CANCELED) + 상품 정보.
+    """
+    if USE_MOCK:
+        # 시연용 mock — 최근 신청 3건 가정
+        return jsonify([
+            {'application_id':'APP-20260517100000-AABBCC','product_code':'HLT-HEALTHCARE-00012-03',
+             'product_name':'VIP 종합 건강검진','company_name':'LS 헬스케어','category_name':'헬스케어',
+             'status':'IN_REVIEW','created_at':'2026-05-17 10:00:00'},
+            {'application_id':'APP-20260515143020-AABBCC','product_code':'INS-INSURANCE-00045-02',
+             'product_name':'프리미엄 실손 보험','company_name':'LS 보험','category_name':'보험',
+             'status':'APPROVED','created_at':'2026-05-15 14:30:20'},
+            {'application_id':'APP-20260510091505-AABBCC','product_code':'BANK-DEPOSIT-00001-01',
+             'product_name':'PB 우대 정기예금 12개월','company_name':'LS 은행','category_name':'예금',
+             'status':'RECEIVED','created_at':'2026-05-10 09:15:05'},
+        ])
 
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT a.application_id, p.product_code, p.product_name, "
+                "       c.company_name, cat.category_name, a.status, a.created_at "
+                "FROM customer_product_application a "
+                "LEFT JOIN product_master  p   ON a.product_id  = p.product_id "
+                "LEFT JOIN company_master  c   ON p.company_id  = c.company_id "
+                "LEFT JOIN category_master cat ON p.category_id = cat.category_id "
+                "WHERE a.global_id = %s "
+                "ORDER BY a.created_at DESC LIMIT 50",
+                (payload['gid'],),
+            )
+            rows = []
+            for r in cur.fetchall():
+                rows.append({**r, 'created_at': str(r['created_at']) if r.get('created_at') else None})
+            return jsonify(rows)
+    except Exception:
+        return jsonify([])
+
+
+@app.route('/api/my-products')
+@require_jwt
+def api_my_products(payload):
     if USE_MOCK:
         company_key = request.args.get('company', '')
         consented   = MOCK_CONSENTED_KEYS.get(payload['sub'], set())
@@ -665,15 +767,9 @@ def api_my_products():
 
 
 @app.route('/api/campaigns')
-def api_campaigns():
+@require_jwt
+def api_campaigns(payload):
     """등급별 활성 캠페인 배너"""
-    auth  = request.headers.get('Authorization', '')
-    token = auth.removeprefix('Bearer ').strip()
-    try:
-        payload = decode_jwt(token)
-    except jwt.InvalidTokenError:
-        return jsonify({'error': 'invalid token'}), 401
-
     grade = 'BASIC'
     if USE_MOCK:
         user = next((u for u in MOCK_USERS.values() if u['ls_user_id'] == payload['sub']), None)
@@ -723,16 +819,8 @@ def health():
 
 
 @app.route('/api/dashboard')
-def api_dashboard():
-    auth  = request.headers.get('Authorization', '')
-    token = auth.removeprefix('Bearer ').strip()
-    try:
-        payload = decode_jwt(token)
-    except jwt.ExpiredSignatureError:
-        return jsonify({'error': 'token expired'}), 401
-    except jwt.InvalidTokenError:
-        return jsonify({'error': 'invalid token'}), 401
-
+@require_jwt
+def api_dashboard(payload):
     if USE_MOCK:
         h = get_mock_health(payload['sub'])
         return jsonify({**h, 'no_data': False})
@@ -847,21 +935,16 @@ def product_apply(product_code):
 
 
 @app.route('/api/product/<product_code>/apply', methods=['POST'])
-def api_product_apply(product_code):
-    """상품 신청 처리 — customer_product_application 테이블 INSERT."""
-    auth  = request.headers.get('Authorization', '')
-    token = auth.removeprefix('Bearer ').strip()
-    try:
-        payload = decode_jwt(token)
-    except jwt.InvalidTokenError:
-        return jsonify({'error': 'invalid token'}), 401
+@require_jwt
+def api_product_apply(product_code, payload):
+    """상품 신청 처리 — customer_product_application 테이블 INSERT.
 
-    data = request.get_json() or {}
-    applicant_name  = (data.get('applicant_name')  or '').strip()
-    applicant_phone = (data.get('applicant_phone') or '').strip()
-    if not applicant_name or not applicant_phone:
-        return jsonify({'error': '이름과 휴대전화는 필수입니다.'}), 400
-
+    Service-DB v3 기준 9컬럼 슬림 스키마:
+      application_id / global_id / ls_user_id / product_id / status / reviewer_id /
+      reviewed_at / created_at / updated_at
+    INSERT 시점에는 4컬럼 (status default 'RECEIVED', 나머지 자동/NULL).
+    컨택 정보(이름/전화/금액/메모/마케팅동의) 는 별도 시스템 책임 — Aurora 미저장.
+    """
     application_id = f"APP-{datetime.datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{payload['sub'][-6:]}"
 
     if USE_MOCK:
@@ -880,39 +963,26 @@ def api_product_apply(product_code):
             if not product_id:
                 return jsonify({'error': '상품을 찾을 수 없습니다.'}), 404
 
-            # 신청 INSERT — 테이블이 없으면 CREATE TABLE IF NOT EXISTS 로 자동 생성
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS customer_product_application (
-                    application_id   VARCHAR(40) PRIMARY KEY,
-                    global_id        VARCHAR(20) NOT NULL,
-                    ls_user_id       VARCHAR(40),
-                    product_id       BIGINT NOT NULL,
-                    product_code     VARCHAR(50) NOT NULL,
-                    applicant_name   VARCHAR(40) NOT NULL,
-                    applicant_phone  VARCHAR(20) NOT NULL,
-                    applicant_email  VARCHAR(100),
-                    apply_amount     VARCHAR(100),
-                    contact_time     VARCHAR(20),
-                    memo             TEXT,
-                    agree_marketing  CHAR(1) DEFAULT 'N',
-                    status           VARCHAR(20) DEFAULT 'RECEIVED',
-                    created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_global_id (global_id),
-                    INDEX idx_product_id (product_id)
-                ) ENGINE=InnoDB CHARSET=utf8mb4
-            """)
+            # 신청 INSERT — Service-DB/9.customer_product_application.sql (v3, 9컬럼) 단일 출처
             cur.execute("""
                 INSERT INTO customer_product_application
-                  (application_id, global_id, ls_user_id, product_id, product_code,
-                   applicant_name, applicant_phone, applicant_email, apply_amount,
-                   contact_time, memo, agree_marketing)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                application_id, payload['gid'], payload['sub'], product_id, product_code,
-                applicant_name, applicant_phone, data.get('applicant_email') or None,
-                data.get('apply_amount') or None, data.get('contact_time') or 'any',
-                data.get('memo') or None, 'Y' if data.get('agree_marketing') else 'N',
-            ))
+                  (application_id, global_id, ls_user_id, product_id)
+                VALUES (%s, %s, %s, %s)
+            """, (application_id, payload['gid'], payload['sub'], product_id))
+            # 신청 즉시 customer_recommend_history.purchased_flag='Y' UPDATE
+            # (apply_submitted event 와 중복되어도 LIMIT 1 + WHERE purchased_flag='N' 조건이라 안전)
+            cur.execute(
+                "UPDATE customer_recommend_history SET purchased_flag='Y' "
+                "WHERE global_id=%s AND product_id=%s AND purchased_flag='N' LIMIT 1",
+                (payload['gid'], product_id)
+            )
+            # 신청 dashboard_log 도 직접 기록 (event 의존 X)
+            cur.execute(
+                "INSERT INTO customer_dashboard_log "
+                "(global_id, page_type, banner_click, product_click, click_product_id, session_id, view_time) "
+                "VALUES (%s, 'DETAIL', 'N', 'Y', %s, %s, NOW())",
+                (payload['gid'], product_id, application_id)
+            )
         db.commit()
     except Exception as e:
         return jsonify({'error': f'신청 처리 실패: {str(e)}'}), 500
@@ -939,8 +1009,7 @@ def consent():
 
 @app.route('/')
 def dashboard():
-    recs = MOCK_RECOMMENDATIONS if USE_MOCK else []
-    return render_template('index.html', recommendations=recs, companies=COMPANIES)
+    return render_template('index.html')
 
 
 if __name__ == '__main__':

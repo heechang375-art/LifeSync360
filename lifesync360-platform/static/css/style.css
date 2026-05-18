@@ -152,47 +152,6 @@ body {
     flex-direction: column;
     gap: 10px;
 }
-.home-rec-cat {
-    background: var(--card-bg);
-    border-radius: 16px;
-    padding: 14px 16px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.06);
-}
-.home-rec-cat-label {
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--text-sub);
-    text-transform: uppercase;
-    letter-spacing: .05em;
-    margin-bottom: 10px;
-}
-.home-rec-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 0;
-    border-top: 1px solid var(--border);
-    text-decoration: none;
-    cursor: pointer;
-}
-.home-rec-item:first-of-type {
-    border-top: none;
-    padding-top: 0;
-}
-.home-rec-item-name {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-}
-.home-rec-item-tag {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--primary-dark);
-    background: #EEF2FF;
-    padding: 2px 8px;
-    border-radius: 20px;
-    flex-shrink: 0;
-}
 
 
 .chip-type { font-size: 10px; font-weight: 700; color: var(--text-sub); display: block; margin-bottom: 4px; }
@@ -246,31 +205,12 @@ body {
     background: var(--primary);
 }
 /* 설정 페이지 */
-.settings-section-label {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--text-sub);
-    text-transform: uppercase;
-    letter-spacing: .04em;
-    margin: 20px 4px 8px;
-}
-.settings-section-label:first-child { margin-top: 0; }
 .settings-card {
     background: var(--card-bg);
     border-radius: 16px;
     padding: 4px 16px;
     box-shadow: 0 2px 12px rgba(0,0,0,.06);
 }
-.settings-info-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 14px 0;
-    border-bottom: 1px solid var(--border);
-}
-.info-label { font-size: 14px; color: var(--text-sub); }
-.info-value { font-size: 14px; font-weight: 600; }
-.info-value.mono { font-size: 12px; font-family: monospace; color: var(--text-sub); }
 
 .grade-benefit-card { padding: 16px; }
 .benefit-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
@@ -359,16 +299,6 @@ body {
     padding: 8px 20px;
     box-shadow: 0 2px 12px rgba(0,0,0,.06);
 }
-.detail-item { padding: 14px 0; border-bottom: 1px solid var(--border); }
-.detail-item:last-child { border-bottom: none; }
-.detail-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
-}
-.detail-name { font-size: 14px; font-weight: 500; }
-.detail-score { font-size: 14px; font-weight: 700; color: var(--primary); }
 .progress-bar {
     height: 6px;
     background: #EEF2FF;
@@ -380,13 +310,6 @@ body {
     background: linear-gradient(90deg, var(--primary), #60A5FA);
     border-radius: 10px;
     transition: width 1s ease;
-}
-
-.section-title {
-    font-size: 16px;
-    font-weight: 700;
-    margin: 20px 0 12px;
-    color: var(--text);
 }
 
 
@@ -427,39 +350,7 @@ body {
 }
 .grade-next-info { font-size: 12px; color: var(--text-sub); text-align: right; }
 .grade-next-info strong { color: var(--primary); }
-.points-total {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 20px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-    font-size: 14px;
-    color: var(--text-sub);
-}
-.points-total strong { font-size: 22px; font-weight: 700; color: var(--text); }
 
-.history-list {
-    background: var(--card-bg);
-    border-radius: 20px;
-    padding: 8px 20px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.06);
-}
-.history-title { font-size: 15px; font-weight: 700; padding: 14px 0 4px; }
-.history-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 14px 0;
-    border-bottom: 1px solid var(--border);
-}
-.history-item:last-child { border-bottom: none; }
-.history-info { display: flex; flex-direction: column; gap: 3px; }
-.history-desc { font-size: 14px; font-weight: 500; }
-.history-date { font-size: 12px; color: var(--text-sub); }
-.history-points { font-size: 15px; font-weight: 700; }
-.history-points.earn { color: var(--primary); }
-.history-points.use { color: #EF4444; }
 
 /* 하단 네비게이션 */
 .bottom-nav {
@@ -590,26 +481,6 @@ body {
 }
 
 /* 설정 내부 탭 */
-.stab-bar {
-    position: sticky;
-    top: var(--header-h);
-    z-index: 99;
-    display: flex;
-    background: var(--card-bg);
-    border-bottom: 1px solid var(--border);
-}
-.stab-btn {
-    flex: 1;
-    padding: 12px;
-    border: none;
-    background: none;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-sub);
-    cursor: pointer;
-    border-bottom: 2px solid transparent;
-    transition: color .2s, border-color .2s;
-}
 .stab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
 .stab-content.hidden { display: none; }
 
@@ -681,94 +552,14 @@ body {
 .ladder-btn.grade-care     { background: var(--grade-care); }
 
 /* MY 탭 세그먼트 컨트롤 */
-.my-seg-bar {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 10px;
-    background: var(--card-bg);
-    border-radius: 20px;
-    padding: 3px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.06);
-}
-.my-seg-btn {
-    flex: 1;
-    padding: 7px 0;
-    border-radius: 17px;
-    border: none;
-    background: none;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-sub);
-    cursor: pointer;
-    transition: all .2s;
-}
 .my-seg-btn.active { background: var(--primary); color: #fff; }
 
-.spending-placeholder { font-size: 13px; color: var(--text-sub); text-align: center; padding: 16px 0; }
 
 /* MY 탭 계열사 탭 */
-.company-tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 16px 16px 0;
-    margin-bottom: 12px;
-}
-.company-btn {
-    padding: 8px 0;
-    border-radius: 20px;
-    border: 1.5px solid var(--border);
-    background: none;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-sub);
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all .2s;
-    flex: 1 0 calc(25% - 6px);
-    text-align: center;
-}
 .company-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
-.company-panel { display: none; flex-direction: column; gap: 10px; padding: 0 16px 24px; }
 .company-panel.active { display: flex; }
-.company-header {
-    background: var(--card-bg);
-    border-radius: 16px;
-    padding: 16px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.06);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-.company-header-name { font-size: 16px; font-weight: 700; }
-.company-header-count { font-size: 12px; color: var(--text-sub); background: var(--bg); padding: 4px 10px; border-radius: 20px; }
-.company-empty {
-    padding: 48px 0;
-    text-align: center;
-}
-.company-empty-msg { font-size: 14px; font-weight: 600; color: var(--text-sub); margin-bottom: 6px; }
-.company-empty-sub { font-size: 12px; color: var(--text-sub); opacity: .6; }
 
 /* 건강 지표 */
-.health-indicators {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 16px;
-    flex-wrap: wrap;
-}
-.indicator-pill {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    padding: 6px 10px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 600;
-    flex: 1;
-    min-width: 0;
-}
-.indicator-pill span { font-size: 10px; font-weight: 700; margin-left: 2px; }
 .status-normal  { background: #DCFCE7; color: #16A34A; }
 .status-caution { background: #FEF9C3; color: #CA8A04; }
 .status-danger  { background: #FEE2E2; color: #DC2626; }
@@ -826,49 +617,10 @@ body {
 .modal-breakdown-max { font-size: 11px; color: var(--text-sub); font-weight: 400; }
 
 /* MY 탭 섹션 카드 */
-.my-section-card {
-    background: var(--card-bg);
-    border-radius: 16px;
-    padding: 16px;
-    margin-bottom: 12px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.06);
-}
-.my-section-title {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--text);
-    margin-bottom: 14px;
-}
 
 /* 소비 패턴 */
-.spend-item { margin-bottom: 12px; }
-.spend-item:last-child { margin-bottom: 0; }
-.spend-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 6px;
-}
-.spend-label { font-size: 13px; font-weight: 500; }
-.spend-pct { font-size: 13px; font-weight: 700; color: var(--primary); }
 
 /* 등급 업그레이드 액션 */
-.upgrade-action-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border);
-}
-.upgrade-action-item:first-of-type { padding-top: 0; }
-.upgrade-action-item:last-child { border-bottom: none; padding-bottom: 0; }
-.upgrade-icon { font-size: 22px; flex-shrink: 0; width: 34px; text-align: center; }
-.upgrade-info { flex: 1; min-width: 0; }
-.upgrade-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
-.upgrade-desc { font-size: 11px; color: var(--text-sub); }
-.upgrade-rewards { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; }
-.upgrade-points { font-size: 12px; font-weight: 700; color: var(--primary); }
-.upgrade-badge { font-size: 10px; font-weight: 600; color: #16A34A; background: #DCFCE7; padding: 2px 6px; border-radius: 20px; }
 
 /* 추천 순위 리스트 */
 .rank-list { display: flex; flex-direction: column; gap: 10px; }
@@ -901,37 +653,6 @@ body {
 .rank-desc { font-size: 12px; color: var(--text-sub); }
 
 /* MY 탭 보유 상품 */
-.my-product-list { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-.my-product-item {
-    background: var(--card-bg);
-    border-radius: 16px;
-    padding: 14px 16px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.06);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-.my-product-type-badge {
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--primary);
-    background: #EFF6FF;
-    padding: 3px 8px;
-    border-radius: 20px;
-    flex-shrink: 0;
-    white-space: nowrap;
-}
-.my-product-info { flex: 1; min-width: 0; }
-.my-product-name { font-size: 13px; font-weight: 700; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.my-product-meta { font-size: 11px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.my-product-status {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 3px 8px;
-    border-radius: 20px;
-    flex-shrink: 0;
-    white-space: nowrap;
-}
 .sc-ok   { background: #DCFCE7; color: #16A34A; }
 .sc-warn { background: #FEF9C3; color: #CA8A04; }
 .sc-info { background: #EFF6FF; color: #2563EB; }

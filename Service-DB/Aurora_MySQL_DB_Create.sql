@@ -17,6 +17,8 @@
 -- 7. 캠페인 마스터
 -- 8. 고객 추천 이력
 -- 9. 고객 Dashboard 로그
+-- 10. 상품 신청 이력             (2026-05-17 ADDED)
+-- 11. 일별 추천 성과 mart        (2026-05-17 ADDED)
 -- ===============================================================
 
 
@@ -316,6 +318,59 @@ CREATE TABLE IF NOT EXISTS customer_dashboard_log (
 
 
 -- ===============================================================
+-- 10. 상품 신청 이력  (2026-05-17 ADDED)
+-- ===============================================================
+
+CREATE TABLE IF NOT EXISTS customer_product_application (
+
+    application_id     VARCHAR(40)  PRIMARY KEY,
+
+    global_id          VARCHAR(50)  NOT NULL,
+    ls_user_id         VARCHAR(40),
+
+    product_id         BIGINT       NOT NULL,
+
+    status             ENUM('RECEIVED','IN_REVIEW','APPROVED','REJECTED','CANCELED')
+                       NOT NULL DEFAULT 'RECEIVED',
+    reviewer_id        VARCHAR(40),
+    reviewed_at        DATETIME,
+
+    created_at         DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    updated_at         DATETIME     DEFAULT CURRENT_TIMESTAMP
+                                  ON UPDATE CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_application_product
+    FOREIGN KEY (product_id)
+    REFERENCES product_master(product_id)
+    ON DELETE RESTRICT
+    ON UPDATE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- ===============================================================
+-- 11. 일별 추천 성과 mart  (2026-05-17 ADDED)
+-- ===============================================================
+
+CREATE TABLE IF NOT EXISTS customer_recommend_daily (
+
+    date           DATE         PRIMARY KEY,
+
+    recommended    INT          NOT NULL DEFAULT 0,
+    clicked        INT          NOT NULL DEFAULT 0,
+    purchased      INT          NOT NULL DEFAULT 0,
+
+    ctr            DECIMAL(5,2),
+    cvr            DECIMAL(5,2),
+
+    created_at     DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    updated_at     DATETIME     DEFAULT CURRENT_TIMESTAMP
+                              ON UPDATE CURRENT_TIMESTAMP
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- ===============================================================
 -- INDEX
 -- ===============================================================
 
@@ -348,6 +403,22 @@ ON recommend_rule(target_grade);
 
 CREATE INDEX idx_rule_action
 ON recommend_rule(action_code);
+
+-- ─── 2026-05-17 ADDED ───
+CREATE INDEX idx_application_global
+ON customer_product_application(global_id);
+
+CREATE INDEX idx_application_product
+ON customer_product_application(product_id);
+
+CREATE INDEX idx_application_status
+ON customer_product_application(status, created_at);
+
+CREATE INDEX idx_application_created
+ON customer_product_application(created_at);
+
+CREATE INDEX idx_recommend_daily_date
+ON customer_recommend_daily(date);
 
 
 -- ===============================================================

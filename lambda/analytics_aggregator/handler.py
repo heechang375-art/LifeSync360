@@ -3,15 +3,15 @@ analytics_aggregator — 일배치 집계 Lambda
 
 EventBridge cron (03:00 KST) 또는 수동 invoke 로 실행.
 [1] Aurora customer_recommend_history → customer_recommend_daily (어제 1일치 upsert)  — P3 r10
-[2] Aurora + 온프레 인구통계 JOIN → DDB analytics_segment_performance (오늘자 세그먼트별 CTR/CVR)  — P3 r12
-[3] 온프레 인구통계 분포 → DDB analytics_demographic_summary (오늘자 차원별 비율)  — P3 r13
+[2] Aurora + 온프레 인구통계 JOIN → DDB analytics_segment_daily (오늘자 세그먼트별 CTR/CVR)  — P3 r12
+[3] 온프레 인구통계 분포 → DDB analytics_demographic_daily (오늘자 차원별 비율)  — P3 r13
 
 환경변수:
   AWS_REGION                              (lambda runtime 자동 주입)
   AURORA_SECRET_ID        — Secrets Manager id (예: lifesync/aurora)
   AURORA_DB_NAME          — 기본 lifesync360
-  DDB_SEGMENT_TABLE       — 기본 analytics_segment_performance
-  DDB_DEMOGRAPHIC_TABLE   — 기본 analytics_demographic_summary
+  DDB_SEGMENT_TABLE       — 기본 analytics_segment_daily
+  DDB_DEMOGRAPHIC_TABLE   — 기본 analytics_demographic_daily
   ONPREM_QUERY_LAMBDA     — onprem_customer_query lambda 함수명 (선택)
 """
 import json
@@ -24,8 +24,8 @@ import pymysql
 REGION                = os.environ.get('AWS_REGION', 'ap-northeast-2')
 AURORA_SECRET_ID      = os.environ.get('AURORA_SECRET_ID', 'lifesync/aurora')
 AURORA_DB_NAME        = os.environ.get('AURORA_DB_NAME', 'lifesync360')
-DDB_SEGMENT_TABLE     = os.environ.get('DDB_SEGMENT_TABLE', 'analytics_segment_performance')
-DDB_DEMOGRAPHIC_TABLE = os.environ.get('DDB_DEMOGRAPHIC_TABLE', 'analytics_demographic_summary')
+DDB_SEGMENT_TABLE     = os.environ.get('DDB_SEGMENT_TABLE', 'analytics_segment_daily')
+DDB_DEMOGRAPHIC_TABLE = os.environ.get('DDB_DEMOGRAPHIC_TABLE', 'analytics_demographic_daily')
 ONPREM_QUERY_LAMBDA   = os.environ.get('ONPREM_QUERY_LAMBDA', '')
 
 KST = timezone(timedelta(hours=9))
@@ -83,7 +83,7 @@ def aggregate_recommend_daily(conn):
 
 
 # ───────────────────────────────────────────────────────────────
-# [2] analytics_segment_performance — 인구통계 차원 × CTR/CVR
+# [2] analytics_segment_daily — 인구통계 차원 × CTR/CVR
 # ───────────────────────────────────────────────────────────────
 def aggregate_segment_performance(conn):
     """
@@ -152,7 +152,7 @@ def aggregate_segment_performance(conn):
 
 
 # ───────────────────────────────────────────────────────────────
-# [3] analytics_demographic_summary — 차원별 인구 분포 비율
+# [3] analytics_demographic_daily — 차원별 인구 분포 비율
 # ───────────────────────────────────────────────────────────────
 def aggregate_demographic_summary():
     """
@@ -197,25 +197,51 @@ def aggregate_demographic_summary():
 
 # ───────────────────────────────────────────────────────────────
 # 온프레 customer_360_profile fetch (PrivateAPI via onprem_customer_query lambda)
-# 실패 시 빈 dict 반환 — caller 가 skip 판단
+# 1M 행을 sync invoke 6MB 제한에 맞추기 위해 페이지 루프 (size=10000, ~100 pages).
+# segment_performance / demographic_summary 두 곳에서 호출되므로 단순 메모이즈.
+# 실패 시 빈 dict — caller 가 skip 판단.
 # ───────────────────────────────────────────────────────────────
+PROFILE_PAGE_SIZE = int(os.environ.get('PROFILE_PAGE_SIZE', '10000'))
+PROFILE_MAX_PAGES = int(os.environ.get('PROFILE_MAX_PAGES', '200'))   # 안전 상한 (≥ 2M 행)
+
+_profile_cache = None
+
 def _fetch_onprem_profile_map():
+    global _profile_cache
+    if _profile_cache is not None:
+        return _profile_cache
     if not ONPREM_QUERY_LAMBDA:
-        return {}
+        _profile_cache = {}
+        return _profile_cache
+
+    profile_map = {}
     try:
-        resp = _lambda.invoke(
-            FunctionName  = ONPREM_QUERY_LAMBDA,
-            InvocationType= 'RequestResponse',
-            Payload       = json.dumps({'action': 'list_profile_all'}).encode(),
-        )
-        body = json.loads(resp['Payload'].read())
-        if body.get('statusCode') != 200:
-            return {}
-        # body['body'] is JSON string. expected: [{'global_id':'G...','gender':'M', 'age_band':'40s', ...}, ...]
-        items = json.loads(body['body'])
-        return {it['global_id']: it for it in items if it.get('global_id')}
+        for page in range(PROFILE_MAX_PAGES):
+            resp = _lambda.invoke(
+                FunctionName  = ONPREM_QUERY_LAMBDA,
+                InvocationType= 'RequestResponse',
+                Payload       = json.dumps({
+                    'action': 'list_profile_page',
+                    'page'  : page,
+                    'size'  : PROFILE_PAGE_SIZE,
+                }).encode(),
+            )
+            envelope = json.loads(resp['Payload'].read())
+            if envelope.get('statusCode') != 200:
+                break
+            body  = json.loads(envelope['body']) if isinstance(envelope.get('body'), str) else envelope.get('body', {})
+            items = body.get('items') or []
+            for it in items:
+                gid = it.get('global_id')
+                if gid:
+                    profile_map[gid] = it
+            if len(items) < PROFILE_PAGE_SIZE:
+                break    # 마지막 페이지
     except Exception:
-        return {}
+        pass
+
+    _profile_cache = profile_map
+    return _profile_cache
 
 
 # ───────────────────────────────────────────────────────────────
