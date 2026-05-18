@@ -139,6 +139,8 @@ def handler(event, context):
             result = _api_get(f'/internal/customer/{body["global_id"]}')
         elif action == 'get_pii':
             result = _api_get(f'/internal/pii/{body["global_id"]}')
+        elif action == 'get_pii_masked':
+            result = _api_get(f'/internal/pii-masked/{body["global_id"]}')
         elif action == 'get_all':
             customer = _api_get(f'/internal/customer/{body["global_id"]}')
             consent  = _api_get(f'/internal/consent/{body["global_id"]}')

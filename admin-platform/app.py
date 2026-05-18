@@ -990,12 +990,13 @@ def user_detail(global_id):
         # ④ 온프레 Lambda — 계열사 매핑 (customer_identity_map)
         identities = (_call_onprem('get_identity_map', global_id=global_id) or {}).get('identities', [])
 
-        # 기본 유저 정보: Aurora users_ref 동기화 전까지 available 필드만 표시
+        # 기본 유저 정보: ls-token /pii-masked (복호화→마스킹값만) 경유
+        pii = _call_onprem('get_pii_masked', global_id=global_id) or {}
         user = {
             'global_id':  global_id,
-            'ls_user_id': '-',
-            'name':       '-',
-            'email':      '-',
+            'ls_user_id': pii.get('ls_user_id') or '-',
+            'name':       pii.get('name') or '-',
+            'email':      pii.get('email') or '-',
             'grade':      scores.get('dynamic_grade', '-') if scores else '-',
         }
 
@@ -1366,6 +1367,14 @@ def api_customer_profile(global_id):
     if USE_MOCK:
         return jsonify(_profile_full_mock(global_id))
     customer = _call_onprem('get_profile', global_id=global_id) or {}
+    pii      = _call_onprem('get_pii_masked', global_id=global_id) or {}
+    customer.update({
+        'ls_user_id': pii.get('ls_user_id'),
+        'name':       pii.get('name'),
+        'email':      pii.get('email'),
+        'mobile':     pii.get('mobile'),
+        'address':    pii.get('address'),
+    })
     consents = _load_consent_from_s3(global_id).get('consents', [])
     return jsonify({
         'global_id': global_id,

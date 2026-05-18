@@ -152,8 +152,11 @@ def pii_masked(global_id: str):
     try:
         with db.cursor() as cur:
             cur.execute(
-                'SELECT customer_name_enc, mobile_enc, email_enc, address_enc '
-                'FROM customer_pii_secure WHERE global_id = %s',
+                'SELECT p.customer_name_enc, p.mobile_enc, p.email_enc, p.address_enc, '
+                'u.ls_user_id '
+                'FROM customer_pii_secure p '
+                'LEFT JOIN users u ON u.global_id = p.global_id '
+                'WHERE p.global_id = %s',
                 (global_id,)
             )
             row = cur.fetchone()
@@ -162,11 +165,12 @@ def pii_masked(global_id: str):
     if not row:
         raise HTTPException(status_code=404, detail='PII not found')
     return {
-        'global_id': global_id,
-        'name':      _mask_name(_dec(row['customer_name_enc'])),
-        'mobile':    _mask_mobile(_dec(row['mobile_enc'])),
-        'email':     _mask_email(_dec(row['email_enc'])),
-        'address':   _mask_address(_dec(row['address_enc'])),
+        'global_id':  global_id,
+        'ls_user_id': row['ls_user_id'],
+        'name':       _mask_name(_dec(row['customer_name_enc'])),
+        'mobile':     _mask_mobile(_dec(row['mobile_enc'])),
+        'email':      _mask_email(_dec(row['email_enc'])),
+        'address':    _mask_address(_dec(row['address_enc'])),
     }
 
 

@@ -6,6 +6,7 @@ import os
 import socket
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -339,7 +340,7 @@ def get_pii(global_id: str):
 def pii_masked_proxy(global_id: str):
     """ls-token /pii-masked 프록시 — PII 복호화 키는 ls-token만 보유, 마스킹값만 전달."""
     host, port = VM_HOSTS['ls-token']
-    url = f'http://{host}:{port}/pii-masked/{global_id}'
+    url = f'http://{host}:{port}/pii-masked/{urllib.parse.quote(global_id, safe="")}'
     try:
         with urllib.request.urlopen(url, timeout=5) as r:
             return json.loads(r.read())
