@@ -15,6 +15,7 @@ import pymysql
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from dbutils.pooled_db import PooledDB
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -95,6 +96,21 @@ _db_pool = PooledDB(
 def get_db():
     """pool 에서 connection 반환. 기존 호출자는 그대로 — db.close() 는 pool 반환."""
     return _db_pool.connection()
+
+
+def _ndjson_stream(sql, params):
+    """SSDictCursor 서버사이드 커서로 행을 NDJSON 줄단위 스트림 (대용량 메모리 안전)."""
+    def gen():
+        db = get_db()
+        try:
+            with db.cursor(pymysql.cursors.SSDictCursor) as cur:
+                cur.execute(sql, params)
+                for row in cur:
+                    yield json.dumps(row, ensure_ascii=False,
+                                     default=lambda o: o.isoformat() if hasattr(o, 'isoformat') else str(o)) + '\n'
+        finally:
+            db.close()
+    return StreamingResponse(gen(), media_type='application/x-ndjson')
 
 
 def _now_iso() -> str:
@@ -195,6 +211,7 @@ def list_consent_all(page: int = 0, size: int = 10000, after: str = None):
         '       (SELECT JSON_ARRAYAGG(JSON_OBJECT('
         '            \'domain\',        c.domain, '
         '            \'consent_flag\',  c.consent_flag, '
+        '            \'consent_version\', c.consent_version, '
         '            \'consent_dt\',    c.consent_dt, '
         '            \'revoke_dt\',     c.revoke_dt)) '
         '        FROM consent c WHERE c.global_id = u.global_id) AS consents '
@@ -220,6 +237,28 @@ def list_consent_all(page: int = 0, size: int = 10000, after: str = None):
             r['consents'] = []
     return {'page': page, 'size': size, 'count': len(rows), 'items': rows,
             'next_after': rows[-1]['global_id'] if rows else None}
+
+
+@app.get('/internal/consent/active')
+def consent_active_stream():
+    """현재 동의(consent_flag='Y' AND revoke_dt IS NULL) NDJSON 스트림 — identity_enricher 용.
+    /internal/consent/{global_id} 보다 먼저 등록돼야 'active' 가 global_id 로 안 먹힘."""
+    return _ndjson_stream(
+        "SELECT global_id, domain, consent_version, consent_dt "
+        "FROM consent WHERE consent_flag = 'Y' AND revoke_dt IS NULL",
+        (),
+    )
+
+
+@app.get('/internal/identity-map')
+def identity_map_stream(domain: str):
+    """domain(LONG/SHORT 모두 허용, DOMAIN_ALIAS 로 SHORT 정규화)별 active 매핑 NDJSON 스트림."""
+    d = DOMAIN_ALIAS.get(domain.upper(), domain.upper())
+    return _ndjson_stream(
+        "SELECT source_customer_id, global_id FROM customer_identity_map "
+        "WHERE domain = %s AND active_flag = 'Y'",
+        (d,),
+    )
 
 
 @app.get('/internal/consent/{global_id}')
@@ -382,6 +421,7 @@ DOMAIN_ALIAS = {
     'SECURITIES': 'SEC',
     'INSURANCE':  'INS',
     'ONLINE_INS': 'ONINS',
+    'ONLINE_INSURANCE': 'ONINS',
     'HEALTHCARE': 'HLT',
     'HOSPITAL':   'HOS',
     'WEARABLE':   'WBL',
