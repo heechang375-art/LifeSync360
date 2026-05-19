@@ -5,6 +5,7 @@ import json
 import os
 import uuid
 import pymysql
+from dbutils.pooled_db import PooledDB
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -16,24 +17,45 @@ SECRET_ID = 'lifesync/onprem-db'
 DB_NAME = 'lifesync_onprem'
 MYSQL_HOST = os.environ.get('MYSQL_HOST', '127.0.0.1')
 
+DB_POOL_MIN     = int(os.environ.get('DB_POOL_MIN', '2'))
+DB_POOL_MAX     = int(os.environ.get('DB_POOL_MAX', '10'))
+DB_POOL_MAXIDLE = int(os.environ.get('DB_POOL_MAXIDLE', '5'))
+
 ALLOWED_FIELDS = {'resident_number', 'phone_number', 'account_number', 'card_number', 'email'}
 
 
-def get_db():
+def _resolve_db_creds():
     db_user = os.environ.get('DB_USER')
     db_pass = os.environ.get('DB_PASS')
     if not db_user or not db_pass:
         secret = boto3.client('secretsmanager', region_name=REGION).get_secret_value(SecretId=SECRET_ID)
         creds = json.loads(secret['SecretString'])
-        db_user = creds['username']
-        db_pass = creds['password']
-    return pymysql.connect(
-        host=MYSQL_HOST,
-        user=db_user,
-        password=db_pass,
-        database=DB_NAME,
-        cursorclass=pymysql.cursors.DictCursor
-    )
+        db_user, db_pass = creds['username'], creds['password']
+    return db_user, db_pass
+
+
+_DB_USER, _DB_PASS = _resolve_db_creds()
+
+_db_pool = PooledDB(
+    creator        = pymysql,
+    mincached      = DB_POOL_MIN,
+    maxcached      = DB_POOL_MAXIDLE,
+    maxconnections = DB_POOL_MAX,
+    blocking       = True,        # pool 고갈 시 대기 (drop 대신)
+    ping           = 1,           # 매 checkout 시 SELECT 1 (stale 방지)
+    host           = MYSQL_HOST,
+    user           = _DB_USER,
+    password       = _DB_PASS,
+    database       = DB_NAME,
+    cursorclass    = pymysql.cursors.DictCursor,
+    charset        = 'utf8mb4',
+    autocommit     = False,
+)
+
+
+def get_db():
+    """pool 에서 connection 반환. db.close() 는 pool 반환."""
+    return _db_pool.connection()
 
 
 class TokenizeRequest(BaseModel):

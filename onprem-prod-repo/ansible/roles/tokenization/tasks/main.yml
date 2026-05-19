@@ -38,6 +38,7 @@
       - pymysql
       - pydantic
       - cryptography
+      - DBUtils
     virtualenv: /opt/tokenization/venv
 
 - name: Deploy PII AES key env (pii-masked 엔드포인트 복호화용)
