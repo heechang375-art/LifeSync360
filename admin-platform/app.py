@@ -1,6 +1,7 @@
 import os
 import functools
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import boto3
 from flask import Flask, render_template, request, redirect, url_for, session
@@ -966,33 +967,46 @@ def user_detail(global_id):
         recommend_history = MOCK_RECOMMEND_HISTORY.get(global_id, [])
         identities        = MOCK_IDENTITIES.get(global_id, [])
     else:
-        # ① DynamoDB — 등급·점수
-        result = get_dynamo_table().get_item(Key={'global_id': global_id})
-        scores = result.get('Item')
+        # 독립 I/O 동시 실행 (DDB·S3·Aurora·Lambda×2). user 는 수합 후 조립.
+        def _scores():
+            return get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item')
 
-        # ② S3 동의 스냅샷 (consent_snapshot_aggregator 가 매일 KST 03:00 적재)
-        consents = _load_consent_from_s3(global_id).get('consents', [])
+        def _consents():
+            return _load_consent_from_s3(global_id).get('consents', [])
 
-        # ③ Aurora — 추천 이력
-        db = get_db()
-        try:
-            with db.cursor() as cur:
-                cur.execute(
-                    'SELECT p.product_name, r.recommended_at, r.clicked_flag, r.purchased_flag '
-                    'FROM customer_recommend_history r '
-                    'JOIN product_master p ON r.product_id = p.product_id '
-                    'WHERE r.global_id = %s ORDER BY r.recommended_at DESC',
-                    (global_id,)
-                )
-                recommend_history = cur.fetchall()
-        finally:
-            db.close()
+        def _recommend_history():
+            db = get_db()
+            try:
+                with db.cursor() as cur:
+                    cur.execute(
+                        'SELECT p.product_name, r.recommended_at, r.clicked_flag, r.purchased_flag '
+                        'FROM customer_recommend_history r '
+                        'JOIN product_master p ON r.product_id = p.product_id '
+                        'WHERE r.global_id = %s ORDER BY r.recommended_at DESC',
+                        (global_id,)
+                    )
+                    return cur.fetchall()
+            finally:
+                db.close()
 
-        # ④ 온프레 Lambda — 계열사 매핑 (customer_identity_map)
-        identities = (_call_onprem('get_identity_map', global_id=global_id) or {}).get('identities', [])
+        def _identities():
+            return (_call_onprem('get_identity_map', global_id=global_id) or {}).get('identities', [])
 
-        # 기본 유저 정보: ls-token /pii-masked (복호화→마스킹값만) 경유
-        pii = _call_onprem('get_pii_masked', global_id=global_id) or {}
+        def _pii():
+            return _call_onprem('get_pii_masked', global_id=global_id) or {}
+
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            f_scores = ex.submit(_scores)
+            f_cons   = ex.submit(_consents)
+            f_hist   = ex.submit(_recommend_history)
+            f_ident  = ex.submit(_identities)
+            f_pii    = ex.submit(_pii)
+            scores            = f_scores.result()
+            consents          = f_cons.result()
+            recommend_history = f_hist.result()
+            identities        = f_ident.result()
+            pii               = f_pii.result()
+
         user = {
             'global_id':  global_id,
             'ls_user_id': pii.get('ls_user_id') or '-',
@@ -1377,8 +1391,13 @@ def api_customer_profile(global_id):
     """
     if USE_MOCK:
         return jsonify(_profile_full_mock(global_id))
-    customer = _call_onprem('get_profile', global_id=global_id) or {}
-    pii      = _call_onprem('get_pii_masked', global_id=global_id) or {}
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_customer = ex.submit(lambda: _call_onprem('get_profile', global_id=global_id) or {})
+        f_pii      = ex.submit(lambda: _call_onprem('get_pii_masked', global_id=global_id) or {})
+        f_cons     = ex.submit(lambda: _load_consent_from_s3(global_id).get('consents', []))
+        customer = f_customer.result()
+        pii      = f_pii.result()
+        consents = f_cons.result()
     customer.update({
         'ls_user_id': pii.get('ls_user_id'),
         'name':       pii.get('name'),
@@ -1386,7 +1405,6 @@ def api_customer_profile(global_id):
         'mobile':     pii.get('mobile'),
         'address':    pii.get('address'),
     })
-    consents = _load_consent_from_s3(global_id).get('consents', [])
     return jsonify({
         'global_id': global_id,
         'customer':  customer,
