@@ -36,7 +36,7 @@ GLUE_JOB_NAME = os.environ.get('GLUE_JOB_NAME', '')
 AWS_REGION    = os.environ.get('AWS_REGION', 'ap-northeast-2')
 FETCH_BATCH   = int(os.environ.get('FETCH_BATCH', '5000'))
 
-CONSENT_KEYS = ['BANK', 'CARD', 'SECURITIES', 'INSURANCE', 'HEALTHCARE', 'HOSPITAL', 'WEARABLE']
+CONSENT_KEYS = ['BANK', 'CARD', 'SEC', 'INS', 'ONINS', 'HLT', 'HOS', 'WBL']
 
 _s3   = None
 _glue = None

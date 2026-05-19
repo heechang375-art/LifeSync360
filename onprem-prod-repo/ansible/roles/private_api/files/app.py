@@ -371,11 +371,20 @@ class ConsentSaveRequest(BaseModel):
     global_id: str
     consents:  list
 
-ALL_CONSENT_KEYS = ['BANK', 'CARD', 'INSURANCE', 'SECURITIES', 'HEALTHCARE', 'HOSPITAL', 'WEARABLE']
+DOMAIN_ALIAS = {
+    'SECURITIES': 'SEC',
+    'INSURANCE':  'INS',
+    'ONLINE_INS': 'ONINS',
+    'HEALTHCARE': 'HLT',
+    'HOSPITAL':   'HOS',
+    'WEARABLE':   'WBL',
+}
+
+ALL_CONSENT_KEYS = ['BANK', 'CARD', 'SEC', 'INS', 'ONINS', 'HLT', 'HOS', 'WBL']
 
 @app.post('/internal/auth/consent')
 def auth_save_consent(req: ConsentSaveRequest):
-    checked = set(req.consents)
+    checked = {DOMAIN_ALIAS.get(c, c) for c in req.consents}
     db = get_db()
     try:
         with db.cursor() as cur:
