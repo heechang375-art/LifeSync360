@@ -8,6 +8,7 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 
 import pymysql
@@ -611,7 +612,7 @@ def match_identity(req: MatchRequest):
                 '''INSERT INTO matching_audit_log (request_id, ls_user_id, match_rule, result, matched_global_id)
                    VALUES (%s, %s, %s, %s, %s)''',
                 (
-                    str(__import__('uuid').uuid4()),
+                    str(uuid.uuid4()),
                     req.source_customer_id,
                     req.domain,
                     'MATCH',
