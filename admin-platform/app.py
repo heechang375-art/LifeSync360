@@ -1,5 +1,6 @@
 import os
 import functools
+import time
 
 import boto3
 from flask import Flask, render_template, request, redirect, url_for, session
@@ -1160,6 +1161,10 @@ def api_admin_local_lab_status():
 
 # ── 시트 정의 helper (설계서 V3 Backend 구현 명세 정합) ─────────────────────────
 
+_DASH_KPI_CACHE = {'ts': 0.0, 'cards': None}
+_DASH_KPI_TTL   = int(os.environ.get('DASH_KPI_CACHE_TTL', '60'))
+
+
 def _stub_aurora_summary():
     """P1 r29 — KPI 9 카드 list (시연↔운영 동일 구조).
 
@@ -1168,6 +1173,10 @@ def _stub_aurora_summary():
     """
     if USE_MOCK:
         return MOCKUP_DASH_KPI
+
+    now = time.time()
+    if _DASH_KPI_CACHE['cards'] is not None and now - _DASH_KPI_CACHE['ts'] < _DASH_KPI_TTL:
+        return _DASH_KPI_CACHE['cards']
 
     # 운영 실 호출 — 부분 실패해도 카드 9개 구조 유지 (mockup baseline fallback)
     cards = [dict(c) for c in MOCKUP_DASH_KPI]    # deep copy
@@ -1218,6 +1227,8 @@ def _stub_aurora_summary():
     except Exception:
         pass
 
+    _DASH_KPI_CACHE['ts']    = time.time()
+    _DASH_KPI_CACHE['cards'] = cards
     return cards
 
 
