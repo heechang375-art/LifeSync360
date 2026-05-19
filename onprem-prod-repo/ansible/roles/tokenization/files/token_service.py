@@ -101,7 +101,7 @@ def detokenize(token_id: str):
     try:
         with db.cursor() as cur:
             cur.execute(
-                'SELECT field_name, global_id, created_at FROM token_map WHERE token_id = %s',
+                'SELECT field_name, global_id, created_dt FROM token_map WHERE token_id = %s',
                 (token_id,)
             )
             row = cur.fetchone()
