@@ -267,7 +267,7 @@ def get_consent(global_id: str):
     try:
         with db.cursor() as cur:
             cur.execute(
-                'SELECT domain, consent_flag, consent_version, revoke_dt, created_dt FROM consent WHERE global_id = %s',
+                'SELECT domain, consent_flag, consent_version, revoke_dt, consent_dt FROM consent WHERE global_id = %s',
                 (global_id,)
             )
             rows = cur.fetchall()
