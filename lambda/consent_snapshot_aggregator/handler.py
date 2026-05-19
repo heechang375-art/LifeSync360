@@ -42,12 +42,12 @@ _lambda = boto3.client('lambda', region_name=REGION)
 _s3     = boto3.client('s3',     region_name=REGION)
 
 
-def _fetch_consent_page(page):
-    """onprem_customer_query Lambda 경유로 PrivateAPI /internal/consent/list-all 호출."""
+def _fetch_consent_page(after):
+    """onprem_customer_query Lambda 경유로 PrivateAPI /internal/consent/list-all keyset 조회."""
     resp = _lambda.invoke(
         FunctionName  = ONPREM_QUERY_LAMBDA,
         InvocationType= 'RequestResponse',
-        Payload       = json.dumps({'action': 'list_consent_page', 'page': page, 'size': PAGE_SIZE}).encode(),
+        Payload       = json.dumps({'action': 'list_consent_page', 'after': after, 'size': PAGE_SIZE}).encode(),
     )
     envelope = json.loads(resp['Payload'].read())
     if envelope.get('statusCode') != 200:
@@ -79,8 +79,9 @@ def handler(event, context):
     total  = 0
 
     with ThreadPoolExecutor(max_workers=PUT_CONCURRENCY) as pool:
-        for page in range(MAX_PAGES):
-            items = _fetch_consent_page(page)
+        after = ''
+        for _ in range(MAX_PAGES):
+            items = _fetch_consent_page(after)
             if not items:
                 break
             # 한 페이지 안 모든 user 동시 PUT (max 100 concurrency)
@@ -88,6 +89,7 @@ def handler(event, context):
             total += len(items)
             if len(items) < PAGE_SIZE:
                 break    # 마지막 페이지
+            after = items[-1]['global_id']
 
     return {
         'statusCode': 200,

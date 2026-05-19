@@ -151,59 +151,64 @@ def get_customer(global_id: str):
 
 
 @app.get('/internal/profile/list-all')
-def list_profile_all(page: int = 0, size: int = 10000):
+def list_profile_all(page: int = 0, size: int = 10000, after: str = None):
     """
     customer_360_profile 전체 분포 페이지 조회 (analytics_aggregator batch 용).
-    1M 행을 sync invoke 6MB 응답 제한에 맞추기 위해 page/size 페이지네이션.
-    items 개수가 size 보다 작으면 마지막 페이지.
+    1M 행을 sync invoke 6MB 응답 제한에 맞추기 위해 페이지네이션.
+    after(global_id 커서) 지정 시 keyset, 미지정 시 기존 OFFSET. items < size 면 마지막.
     """
     if size < 1 or size > 50000:
         raise HTTPException(status_code=400, detail='size: 1~50000 범위')
-    if page < 0:
+    if after is None and page < 0:
         raise HTTPException(status_code=400, detail='page: 0 이상')
+    base = ('SELECT global_id, gender, age_band, region, income_grade, asset_grade '
+            'FROM customer_360_profile ')
+    if after is None:
+        sql, params = base + 'ORDER BY global_id LIMIT %s OFFSET %s', (size, page * size)
+    else:
+        sql, params = base + 'WHERE global_id > %s ORDER BY global_id LIMIT %s', (after, size)
     db = get_db()
     try:
         with db.cursor() as cur:
-            cur.execute(
-                'SELECT global_id, gender, age_band, region, income_grade, asset_grade '
-                'FROM customer_360_profile '
-                'ORDER BY global_id LIMIT %s OFFSET %s',
-                (size, page * size)
-            )
+            cur.execute(sql, params)
             rows = cur.fetchall()
     finally:
         db.close()
-    return {'page': page, 'size': size, 'count': len(rows), 'items': rows}
+    return {'page': page, 'size': size, 'count': len(rows), 'items': rows,
+            'next_after': rows[-1]['global_id'] if rows else None}
 
 
 @app.get('/internal/consent/list-all')
-def list_consent_all(page: int = 0, size: int = 10000):
+def list_consent_all(page: int = 0, size: int = 10000, after: str = None):
     """
     consent 스냅샷 배치용 — users + consent JOIN 페이지 조회 (user 페이지 단위).
 
     user 1명당 1 row, consents 는 JSON_ARRAYAGG 로 8 도메인 묶음.
-    consent_snapshot_aggregator Lambda 가 페이지 루프 호출 후 S3 적재.
+    after(global_id 커서) 지정 시 keyset, 미지정 시 기존 OFFSET.
     """
     if size < 1 or size > 50000:
         raise HTTPException(status_code=400, detail='size: 1~50000 범위')
-    if page < 0:
+    if after is None and page < 0:
         raise HTTPException(status_code=400, detail='page: 0 이상')
+    base = (
+        'SELECT u.global_id, u.ls_user_id, u.user_status, '
+        '       (SELECT JSON_ARRAYAGG(JSON_OBJECT('
+        '            \'domain\',        c.domain, '
+        '            \'consent_flag\',  c.consent_flag, '
+        '            \'consent_dt\',    c.consent_dt, '
+        '            \'revoke_dt\',     c.revoke_dt)) '
+        '        FROM consent c WHERE c.global_id = u.global_id) AS consents '
+        'FROM users u '
+        "WHERE u.user_status = 'ACTIVE' "
+    )
+    if after is None:
+        sql, params = base + 'ORDER BY u.global_id LIMIT %s OFFSET %s', (size, page * size)
+    else:
+        sql, params = base + 'AND u.global_id > %s ORDER BY u.global_id LIMIT %s', (after, size)
     db = get_db()
     try:
         with db.cursor() as cur:
-            cur.execute(
-                'SELECT u.global_id, u.ls_user_id, u.user_status, '
-                '       (SELECT JSON_ARRAYAGG(JSON_OBJECT('
-                '            \'domain\',        c.domain, '
-                '            \'consent_flag\',  c.consent_flag, '
-                '            \'consent_dt\',    c.consent_dt, '
-                '            \'revoke_dt\',     c.revoke_dt)) '
-                '        FROM consent c WHERE c.global_id = u.global_id) AS consents '
-                'FROM users u '
-                "WHERE u.user_status = 'ACTIVE' "
-                'ORDER BY u.global_id LIMIT %s OFFSET %s',
-                (size, page * size)
-            )
+            cur.execute(sql, params)
             rows = cur.fetchall()
     finally:
         db.close()
@@ -213,7 +218,8 @@ def list_consent_all(page: int = 0, size: int = 10000):
             r['consents'] = json.loads(r['consents']) if r['consents'] else []
         elif r.get('consents') is None:
             r['consents'] = []
-    return {'page': page, 'size': size, 'count': len(rows), 'items': rows}
+    return {'page': page, 'size': size, 'count': len(rows), 'items': rows,
+            'next_after': rows[-1]['global_id'] if rows else None}
 
 
 @app.get('/internal/consent/{global_id}')

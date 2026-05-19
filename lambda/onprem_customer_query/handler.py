@@ -31,6 +31,7 @@ event = {
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -175,17 +176,26 @@ def handler(event, context):
 
         # ── analytics batch (P3 r12,r13) ───────────────────────
         elif action == 'list_profile_page':
-            # customer_360_profile 페이지 조회 — analytics_aggregator 가 page 루프.
-            # body['page'] (0~), body['size'] (1~50000, 기본 10000)
-            page = int(body.get('page', 0))
-            size = int(body.get('size', 10000))
-            result = _api_get(f'/internal/profile/list-all?page={page}&size={size}')
+            # customer_360_profile 페이지 조회 — analytics_aggregator batch.
+            # after(global_id 커서) 있으면 keyset, 없으면 page OFFSET (하위호환).
+            size  = int(body.get('size', 10000))
+            after = body.get('after')
+            if after is not None:
+                result = _api_get(f'/internal/profile/list-all?after={urllib.parse.quote(str(after), safe="")}&size={size}')
+            else:
+                page = int(body.get('page', 0))
+                result = _api_get(f'/internal/profile/list-all?page={page}&size={size}')
 
         elif action == 'list_consent_page':
-            # users + consent 페이지 조회 — consent_snapshot_aggregator 가 일배치 page 루프.
-            page = int(body.get('page', 0))
-            size = int(body.get('size', 10000))
-            result = _api_get(f'/internal/consent/list-all?page={page}&size={size}')
+            # users + consent 페이지 조회 — consent_snapshot_aggregator 일배치.
+            # after(global_id 커서) 있으면 keyset, 없으면 page OFFSET (하위호환).
+            size  = int(body.get('size', 10000))
+            after = body.get('after')
+            if after is not None:
+                result = _api_get(f'/internal/consent/list-all?after={urllib.parse.quote(str(after), safe="")}&size={size}')
+            else:
+                page = int(body.get('page', 0))
+                result = _api_get(f'/internal/consent/list-all?page={page}&size={size}')
 
         # ── 단일 헬스 체크 (P4 r40,41,42) ───────────────────────
         elif action == 'vm_health':

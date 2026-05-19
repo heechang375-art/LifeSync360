@@ -216,13 +216,14 @@ def _fetch_onprem_profile_map():
 
     profile_map = {}
     try:
-        for page in range(PROFILE_MAX_PAGES):
+        after = ''
+        for _ in range(PROFILE_MAX_PAGES):
             resp = _lambda.invoke(
                 FunctionName  = ONPREM_QUERY_LAMBDA,
                 InvocationType= 'RequestResponse',
                 Payload       = json.dumps({
                     'action': 'list_profile_page',
-                    'page'  : page,
+                    'after' : after,
                     'size'  : PROFILE_PAGE_SIZE,
                 }).encode(),
             )
@@ -237,6 +238,7 @@ def _fetch_onprem_profile_map():
                     profile_map[gid] = it
             if len(items) < PROFILE_PAGE_SIZE:
                 break    # 마지막 페이지
+            after = items[-1]['global_id']
     except Exception:
         pass
 
