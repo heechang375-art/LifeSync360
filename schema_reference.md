@@ -4,7 +4,8 @@
 - **스키마**: `lifesync_onprem`
 - **엔진**: MySQL 8.x, InnoDB, utf8mb4_unicode_ci
 - **테이블 수**: 8개
-- **기준 일자**: 2026-05-14
+- **기준 일자**: 2026-05-19 (라이브 실측 반영 — 인덱스·행수)
+- **인덱스 추가(2026-05-19)**: users `uq_users_login_email`/`uq_users_ls_user_id`/`idx_users_status`/`idx_global`, master_customer `idx_mc_status` — status·키 풀스캔 제거용. 그 외 인덱스는 기존.
 
 ## ID 체계
 
@@ -20,7 +21,7 @@
 
 ## 1. users (회원 마스터)
 
-> 플랫폼 가입자 정보. 1,000,000건.
+> 플랫폼 가입자(consent_completed='Y') 정보. **300,314건** (2026-05-18 마스터 100만 → 가입 30%로 축소). ACTIVE ≈ 294,277.
 
 | 컬럼 | 타입 | 한글명 | 비고 |
 |------|------|--------|------|
@@ -34,6 +35,8 @@
 | consent_completed | CHAR(1) | 동의 완료 플래그 | `Y` / `N` |
 | created_dt | TIMESTAMP | 가입일시 | |
 | last_login_dt | TIMESTAMP | 최근 로그인 | |
+
+**인덱스/제약**: PK `user_id` · UNIQUE `uq_users_login_email`(login_email) · UNIQUE `uq_users_ls_user_id`(ls_user_id) · INDEX `idx_global`(global_id) · INDEX `idx_users_status`(user_status)
 
 ---
 
@@ -49,6 +52,8 @@
 | customer_type | VARCHAR(15) | 고객 타입 | `INDIVIDUAL` / `CORPORATE` |
 | first_created_dt | TIMESTAMP | 최초 등록일 | |
 | last_updated_dt | TIMESTAMP | 최종 갱신일 | |
+
+**인덱스/제약**: PK `global_id` · INDEX `idx_mc_status`(customer_status) · 1,000,000건
 
 ---
 
@@ -67,6 +72,8 @@
 | address_enc | VARCHAR(500) | 주소(암호화) | 시/도 + 시/군/구 + 도로명 + 건물번호 |
 | created_dt | TIMESTAMP | 행 생성일시 | DEFAULT CURRENT_TIMESTAMP |
 | updated_dt | TIMESTAMP | 마지막 갱신일시 | ON UPDATE CURRENT_TIMESTAMP |
+
+**인덱스/제약**: PK `pii_token` · INDEX `idx_global`(global_id) · 1,000,000건
 
 ---
 
@@ -90,11 +97,13 @@
 | lifesync_score | DECIMAL(5,2) | LifeSync 종합점수 | 0~100 |
 | last_calc_dt | TIMESTAMP | 마지막 계산일시 | |
 
+**인덱스/제약**: PK `global_id` (보조 인덱스 없음 — 전건 분석 배치 전용) · 1,000,000건
+
 ---
 
 ## 5. customer_identity_map (계열사 ID 매핑)
 
-> 계열사별 원본 ID ↔ global_id 매핑. 약 3,498,623건.
+> 계열사별 원본 ID ↔ global_id 매핑. **3,500,246건**.
 
 | 컬럼 | 타입 | 한글명 | 비고 |
 |------|------|--------|------|
@@ -105,6 +114,9 @@
 | match_type | VARCHAR(10) | 매칭 방식 | `EXACT` / `FUZZY` |
 | active_flag | CHAR(1) | 활성 여부 | `Y` / `N` |
 | created_dt | TIMESTAMP | 매핑 생성일시 | DEFAULT CURRENT_TIMESTAMP |
+
+**인덱스/제약**: PK `id` · UNIQUE `uq_map`(global_id, domain) · INDEX `idx_affiliate`(source_customer_id)
+> ⚠️ `domain` 단독 인덱스 없음 → `WHERE domain=?` 필터는 비효율(uq_map 선두컬럼 global_id). 도메인별 대량 조회 시 주의.
 
 ---
 
@@ -139,11 +151,14 @@
 | `N` | 채워짐 | 채워짐 | 동의했다가 철회 |
 | `N` | NULL | NULL | 동의한 적 없음 |
 
+**인덱스/제약**: PK `id` · UNIQUE `uq_consent`(global_id, domain) · INDEX `idx_consent_flag`(consent_flag) · 8,000,000건
+> "현재 동의" 정의 = `consent_flag='Y' AND revoke_dt IS NULL` (라이브 Y행 199,413, distinct global_id 59,817). `idx_consent_flag` 로 Y 필터는 인덱스 사용(풀스캔 아님).
+
 ---
 
 ## 7. matching_audit_log (매칭 감사 로그)
 
-> 계열사 → 통합 매칭 요청 이력. 약 3,498,623건.
+> 계열사 → 통합 매칭 요청 이력. **3,498,623건**.
 
 | 컬럼 | 타입 | 한글명 | 비고 |
 |------|------|--------|------|
@@ -156,6 +171,8 @@
 | result | VARCHAR(20) | 결과 | `MATCH` / `NEW_CREATE` |
 | request_dt | TIMESTAMP | 요청일시 | |
 | remarks | TEXT | 추가 메모 | 자유 텍스트, NULL 가능 |
+
+**인덱스/제약**: PK `audit_id` · INDEX `idx_audit_global`(matched_global_id) · INDEX `idx_audit_ls_user`(ls_user_id) · INDEX `idx_audit_req_dt`(request_dt)
 
 ---
 
@@ -171,8 +188,8 @@
 | global_id | VARCHAR(30) NOT NULL | 원본 global_id | FK → master_customer |
 | created_dt | TIMESTAMP | 발급일시 | DEFAULT CURRENT_TIMESTAMP |
 
-**제약**:
-- `UNIQUE (original_hash)` — 중복 토큰 방지 (멱등)
+**인덱스/제약** (라이브 실측): PK `token_id` · UNIQUE `uq_hash`(original_hash) · INDEX `idx_global`(global_id) · 1,000,000건
+- `UNIQUE uq_hash (original_hash)` — 중복 토큰 방지 (멱등)
 - `FK fk_token_map_global_id` → `master_customer(global_id)` — orphan 방지
 - `KEY idx_global (global_id)` — global_id 조회 인덱스
 
