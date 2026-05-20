@@ -5,7 +5,6 @@ import random
 import threading
 import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import boto3
@@ -91,8 +90,8 @@ def get_db():
     import pymysql
     return pymysql.connect(
         host=os.environ['AURORA_HOST'],
-        user=os.environ['DB_USER'],
-        password=os.environ['DB_PASS'],
+        user=os.environ.get('DB_USER', 'admin'),
+        password=os.environ.get('DB_PASS', 'ChangeMe123!'),
         database=os.environ.get('DB_NAME', 'lifesync360'),
         cursorclass=pymysql.cursors.DictCursor,
     )
@@ -215,89 +214,41 @@ def _ping_cloud_status():
 
 
 def _ping_s3_ingestion():
-    """S3 Data Ingestion — lifesync-* 다중 버킷.
-
-    빠른 응답을 위해:
-    - raw_bucket_files / total_size_bytes: CloudWatch `AWS/S3` 일배치 metric (NumberOfObjects, BucketSizeBytes)
-    - today_ingested / iot_count: lifesync-raw 의 도메인별 prefix list_objects_v2 (MaxKeys 1000)
-    - last_upload: 도메인별 list_objects_v2 (MaxKeys 5) → 정렬 → 첫 건
-    """
-    from datetime import datetime, timezone as _tz, timedelta as _td
-    s3 = _boto('s3')
-    cw = _boto('cloudwatch')
-
-    buckets_env = os.environ.get('LIFESYNC_S3_BUCKETS', '')
-    if buckets_env:
-        buckets = [b.strip() for b in buckets_env.split(',') if b.strip()]
-    else:
-        try:
-            buckets = [b['Name'] for b in s3.list_buckets().get('Buckets', [])
-                       if b['Name'].startswith('lifesync-')]
-        except Exception:
-            buckets = []
-
+    """S3 Data Ingestion — raw bucket 적재 현황."""
     raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', '')
-    domains = ['bank', 'card', 'insurance', 'securities', 'healthcare', 'hospital', 'online_insurance', 'wearable']
-    today = datetime.now(_tz(_td(hours=9))).strftime('%Y-%m-%d')
-    now_utc = datetime.now(_tz.utc)
-    start_utc = now_utc - _td(days=2)
-
-    total = 0
-    total_size = 0
-    for b in buckets:
-        try:
-            r = cw.get_metric_statistics(
-                Namespace='AWS/S3', MetricName='NumberOfObjects',
-                Dimensions=[{'Name': 'BucketName', 'Value': b},
-                            {'Name': 'StorageType', 'Value': 'AllStorageTypes'}],
-                StartTime=start_utc, EndTime=now_utc, Period=86400, Statistics=['Average'],
-            )
-            dp = sorted(r.get('Datapoints', []), key=lambda d: d['Timestamp'], reverse=True)
-            if dp: total += int(dp[0]['Average'])
-        except Exception:
-            pass
-        try:
-            r = cw.get_metric_statistics(
-                Namespace='AWS/S3', MetricName='BucketSizeBytes',
-                Dimensions=[{'Name': 'BucketName', 'Value': b},
-                            {'Name': 'StorageType', 'Value': 'StandardStorage'}],
-                StartTime=start_utc, EndTime=now_utc, Period=86400, Statistics=['Average'],
-            )
-            dp = sorted(r.get('Datapoints', []), key=lambda d: d['Timestamp'], reverse=True)
-            if dp: total_size += int(dp[0]['Average'])
-        except Exception:
-            pass
-
-    today_cnt = 0
-    iot_cnt = 0
-    latest = None
-    if raw_bucket:
-        for d in domains:
-            try:
-                resp = s3.list_objects_v2(Bucket=raw_bucket, Prefix=f'{d}/dt={today}/', MaxKeys=1000)
-                cnt = resp.get('KeyCount', 0)
-                today_cnt += cnt
-                if d in ('wearable',):
-                    iot_cnt += cnt
-                for o in resp.get('Contents', []):
-                    if latest is None or o['LastModified'] > latest['LastModified']:
-                        latest = o
-            except Exception:
-                continue
-
-    return {
-        'raw_bucket_files': total,
-        'today_ingested':   today_cnt,
-        'iot_count':        iot_cnt,
-        'total_size_bytes': total_size,
-        'bucket_count':     len(buckets),
-        'last_upload': {
-            'time': _utc_to_kst(latest['LastModified']) if latest else '-',
-            'file': latest['Key'].split('/')[-1] if latest else '-',
-            'size_mb': round(latest['Size'] / 1024 / 1024, 2) if latest else 0,
-        } if latest else {},
-        'failed_count': 0,
-    }
+    if not raw_bucket:
+        return {'raw_bucket_files': 0, 'today_ingested': 0, 'iot_count': 0,
+                'last_upload': {}, 'failed_count': 0}
+    from datetime import datetime, timezone
+    today_prefix = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    try:
+        s3 = _boto('s3')
+        paginator = s3.get_paginator('list_objects_v2')
+        total = today = iot = 0
+        latest = None
+        for page in paginator.paginate(Bucket=raw_bucket):
+            for o in page.get('Contents', []):
+                total += 1
+                if today_prefix in o['Key']:
+                    today += 1
+                if 'wearable' in o['Key'].lower() or 'iot' in o['Key'].lower():
+                    iot += 1
+                if latest is None or o['LastModified'] > latest['LastModified']:
+                    latest = o
+        return {
+            'raw_bucket_files': total,
+            'today_ingested':   today,
+            'iot_count':        iot,
+            'last_upload': {
+                'time': latest['LastModified'].strftime('%H:%M') if latest else '-',
+                'file': latest['Key'].split('/')[-1] if latest else '-',
+                'size_mb': round(latest['Size'] / 1024 / 1024, 2) if latest else 0,
+            } if latest else {},
+            'failed_count': 0,
+        }
+    except Exception:
+        return {'raw_bucket_files': 0, 'today_ingested': 0, 'iot_count': 0,
+                'last_upload': {}, 'failed_count': 0}
 
 
 def _ping_domain_flow():
@@ -1063,23 +1014,12 @@ def overview():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    """USE_MOCK=false 시 첫 SSR 부터 실 AWS 데이터 (JS 폴링 첫 tick 대기 X)."""
-    if USE_MOCK:
-        kpi      = MOCKUP_DASH_KPI
-        cloud3   = MOCKUP_DASH_CLOUD3
-        s3_cards = MOCKUP_DASH_S3_5
-        uploads  = MOCKUP_DASH_RECENT_UPLOADS
-    else:
-        kpi      = _stub_aurora_summary()   # Aurora 실패 시 내부 fallback
-        cloud3   = _cloud3_from_aws()
-        s3_cards = _s3_status_cards()
-        uploads  = _uploads_from_s3(limit=5)
     return render_template('dashboard.html',
         active='dashboard',
-        kpi=kpi,
-        cloud3=cloud3,
-        s3_cards=s3_cards,
-        uploads=uploads,
+        kpi=MOCKUP_DASH_KPI,
+        cloud3=MOCKUP_DASH_CLOUD3,
+        s3_cards=MOCKUP_DASH_S3_5,
+        uploads=MOCKUP_DASH_RECENT_UPLOADS,
     )
 
 
@@ -1117,51 +1057,37 @@ def user_detail(global_id):
         recommend_history = MOCK_RECOMMEND_HISTORY.get(global_id, [])
         identities        = MOCK_IDENTITIES.get(global_id, [])
     else:
-        # 독립 I/O 동시 실행 (DDB·S3·Aurora·Lambda×2). user 는 수합 후 조립.
-        def _scores():
-            return get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item')
+        # ① DynamoDB — 등급·점수
+        result = get_dynamo_table().get_item(Key={'global_id': global_id})
+        scores = result.get('Item')
 
-        def _consents():
-            return _load_consent_from_s3(global_id).get('consents', [])
+        # ② S3 동의 스냅샷 (consent_snapshot_aggregator 가 매일 KST 03:00 적재)
+        consents = _load_consent_from_s3(global_id).get('consents', [])
 
-        def _recommend_history():
-            db = get_db()
-            try:
-                with db.cursor() as cur:
-                    cur.execute(
-                        'SELECT p.product_name, r.recommended_at, r.clicked_flag, r.purchased_flag '
-                        'FROM customer_recommend_history r '
-                        'JOIN product_master p ON r.product_id = p.product_id '
-                        'WHERE r.global_id = %s ORDER BY r.recommended_at DESC',
-                        (global_id,)
-                    )
-                    return cur.fetchall()
-            finally:
-                db.close()
+        # ③ Aurora — 추천 이력
+        db = get_db()
+        try:
+            with db.cursor() as cur:
+                cur.execute(
+                    'SELECT p.product_name, r.recommended_at, r.clicked_flag, r.purchased_flag '
+                    'FROM customer_recommend_history r '
+                    'JOIN product_master p ON r.product_id = p.product_id '
+                    'WHERE r.global_id = %s ORDER BY r.recommended_at DESC',
+                    (global_id,)
+                )
+                recommend_history = cur.fetchall()
+        finally:
+            db.close()
 
-        def _identities():
-            return (_call_onprem('get_identity_map', global_id=global_id) or {}).get('identities', [])
+        # ④ 온프레 Lambda — 계열사 매핑 (customer_identity_map)
+        identities = (_call_onprem('get_identity_map', global_id=global_id) or {}).get('identities', [])
 
-        def _pii():
-            return _call_onprem('get_pii_masked', global_id=global_id) or {}
-
-        with ThreadPoolExecutor(max_workers=5) as ex:
-            f_scores = ex.submit(_scores)
-            f_cons   = ex.submit(_consents)
-            f_hist   = ex.submit(_recommend_history)
-            f_ident  = ex.submit(_identities)
-            f_pii    = ex.submit(_pii)
-            scores            = f_scores.result()
-            consents          = f_cons.result()
-            recommend_history = f_hist.result()
-            identities        = f_ident.result()
-            pii               = f_pii.result()
-
+        # 기본 유저 정보: Aurora users_ref 동기화 전까지 available 필드만 표시
         user = {
             'global_id':  global_id,
-            'ls_user_id': pii.get('ls_user_id') or '-',
-            'name':       pii.get('name') or '-',
-            'email':      pii.get('email') or '-',
+            'ls_user_id': '-',
+            'name':       '-',
+            'email':      '-',
             'grade':      scores.get('dynamic_grade', '-') if scores else '-',
         }
 
@@ -1265,8 +1191,8 @@ def ai():
 
     return render_template('ai.html',
         active='ai',
-        # USE_MOCK=false 시 첫 SSR 부터 Lambda CloudWatch 활용
-        kpi4=MOCKUP_AI_KPI4 if USE_MOCK else _ai_kpi4_from_aws(),
+        # 화이트 샘플 전용
+        kpi4=MOCKUP_AI_KPI4,
         trend_7d=recommend_trend,
         top10=top10,
         cat_donut=MOCKUP_AI_CAT_DONUT,
@@ -1325,10 +1251,6 @@ def api_admin_local_lab_status():
 
 # ── 시트 정의 helper (설계서 V3 Backend 구현 명세 정합) ─────────────────────────
 
-_DASH_KPI_CACHE = {'ts': 0.0, 'cards': None}
-_DASH_KPI_TTL   = int(os.environ.get('DASH_KPI_CACHE_TTL', '60'))
-
-
 def _stub_aurora_summary():
     """P1 r29 — KPI 9 카드 list (시연↔운영 동일 구조).
 
@@ -1337,10 +1259,6 @@ def _stub_aurora_summary():
     """
     if USE_MOCK:
         return MOCKUP_DASH_KPI
-
-    now = time.time()
-    if _DASH_KPI_CACHE['cards'] is not None and now - _DASH_KPI_CACHE['ts'] < _DASH_KPI_TTL:
-        return _DASH_KPI_CACHE['cards']
 
     # 운영 실 호출 — 부분 실패해도 카드 9개 구조 유지 (mockup baseline fallback)
     cards = [dict(c) for c in MOCKUP_DASH_KPI]    # deep copy
@@ -1391,8 +1309,6 @@ def _stub_aurora_summary():
     except Exception:
         pass
 
-    _DASH_KPI_CACHE['ts']    = time.time()
-    _DASH_KPI_CACHE['cards'] = cards
     return cards
 
 
@@ -1500,43 +1416,25 @@ def api_cloud_status():
     return jsonify({'aws': _ping_cloud_status(), 'gcp': _stub_gcp_status() or MOCKUP_GCP_STATUS_DETAIL})
 
 
-def _ec2_lifesync_count():
-    """EC2 인스턴스 카운트 — Tag Project=lifesync 또는 LifeSync, running 만. 가벼운 1 API."""
-    try:
-        ec2 = _boto('ec2')
-        resp = ec2.describe_instances(Filters=[
-            {'Name': 'instance-state-name', 'Values': ['running']},
-            {'Name': 'tag:Project',         'Values': ['lifesync', 'LifeSync', 'LIFESYNC']},
-        ])
-        return sum(len(r.get('Instances', [])) for r in resp.get('Reservations', []))
-    except Exception:
-        return 0
-
-
 def _cloud3_from_aws():
-    """AWS 8 영역 ping → dashboard AWS 카드 1개 (RDS/DDB/Redis/ECS/ALB/S3/Lambda/EC2).
+    """AWS 6 서비스 ping 결과를 dashboard 의 AWS 카드 1개로 집계.
 
-    GCP / On-Prem 은 stub / mock fallback. CloudWatch metric 회피 — 빠른 describe 만.
+    GCP / On-Prem 은 stub / mock fallback.
     """
     aws_list = _ping_cloud_status() or []
-    ec2_count    = _ec2_lifesync_count()
-    lambda_count = len(_list_lifesync_lambdas() or [])
-
-    extra = []
-    if lambda_count: extra.append({'service': 'AWS Lambda', 'state': 'UP', 'note': f'{lambda_count} functions'})
-    if ec2_count:    extra.append({'service': 'AWS EC2',    'state': 'UP', 'note': f'{ec2_count} instances'})
-    full_list = aws_list + extra
-    up = sum(1 for x in full_list if x.get('state') == 'UP')
-
+    up = sum(1 for x in aws_list if x.get('state') == 'UP')
     cards = [dict(c) for c in MOCKUP_DASH_CLOUD3]   # baseline copy
-    cards[0]['state'] = f'{up} / {len(full_list)} 정상'
-    cards[0]['sub']   = ' · '.join(x['service'].replace('AWS ', '') for x in full_list)
 
+    cards[0]['state'] = f'{up} / {len(aws_list)} 정상'
+    cards[0]['sub']   = ' · '.join(x['service'].replace('AWS ', '') for x in aws_list[:6])
+
+    # GCP — stub 응답 (자격증명 없으면 빈 dict)
     gcp = _stub_gcp_status() or {}
     if gcp.get('state'):
         cards[1]['state'] = gcp.get('state', cards[1]['state'])
         cards[1]['sub']   = gcp.get('note',  cards[1]['sub'])
 
+    # On-Prem — PrivateAPI ping (미구현) → mock 유지
     return cards
 
 
@@ -1564,29 +1462,18 @@ _BADGE_MAP = {
 }
 
 
-_KST = timezone(timedelta(hours=9)) if 'timedelta' in dir() else None
-
-def _utc_to_kst(dt):
-    """UTC datetime → KST HH:MM:SS."""
-    from datetime import timedelta, timezone as _tz
-    kst = dt.astimezone(_tz(timedelta(hours=9)))
-    return kst.strftime('%H:%M:%S')
-
-
-def _uploads_from_s3(limit=5):
-    """lifesync-raw 최근 업로드 N건. 시간 KST. 도메인 prefix × 오늘 dt 만 list_objects_v2 — 빠름."""
+def _uploads_from_s3(limit=10):
+    """S3 raw bucket 최근 업로드 N건 — `list_objects_v2` 변환 → uploads 표 schema."""
     raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', '')
     if not raw_bucket:
-        return MOCKUP_DASH_RECENT_UPLOADS[:limit]
-    from datetime import datetime, timezone as _tz, timedelta as _td
-    today = datetime.now(_tz(_td(hours=9))).strftime('%Y-%m-%d')
-    domains = ['bank', 'card', 'insurance', 'securities', 'healthcare', 'hospital', 'online_insurance', 'wearable']
-    objs = []
+        return MOCKUP_DASH_RECENT_UPLOADS
     try:
         s3 = _boto('s3')
-        for d in domains:
-            resp = s3.list_objects_v2(Bucket=raw_bucket, Prefix=f'{d}/dt={today}/', MaxKeys=10)
-            objs.extend(resp.get('Contents', []))
+        paginator = s3.get_paginator('list_objects_v2')
+        objs = []
+        for page in paginator.paginate(Bucket=raw_bucket):
+            for o in page.get('Contents', []):
+                objs.append(o)
         objs.sort(key=lambda o: o['LastModified'], reverse=True)
         out = []
         for o in objs[:limit]:
@@ -1595,16 +1482,16 @@ def _uploads_from_s3(limit=5):
             badge = _BADGE_MAP.get(prefix, {'badge': prefix.upper()[:4] or '?', 'badge_bg': '#f1f5f9', 'badge_color': '#64748b'})
             size_mb = o['Size'] / 1024 / 1024
             out.append({
-                'time': _utc_to_kst(o['LastModified']),
+                'time': o['LastModified'].strftime('%H:%M:%S'),
                 'file': key.split('/')[-1],
                 'badge':       badge['badge'],
                 'badge_bg':    badge['badge_bg'],
                 'badge_color': badge['badge_color'],
                 'size': f'{size_mb:.1f} MB' if size_mb >= 0.1 else f'{o["Size"]/1024:.1f} KB',
             })
-        return out or MOCKUP_DASH_RECENT_UPLOADS[:limit]
+        return out or MOCKUP_DASH_RECENT_UPLOADS
     except Exception:
-        return MOCKUP_DASH_RECENT_UPLOADS[:limit]
+        return MOCKUP_DASH_RECENT_UPLOADS
 
 
 @app.route('/api/dashboard/uploads')
@@ -1616,7 +1503,7 @@ def api_dashboard_uploads():
     """
     if USE_MOCK:
         return jsonify(MOCKUP_DASH_RECENT_UPLOADS)
-    return jsonify(_uploads_from_s3(limit=5))
+    return jsonify(_uploads_from_s3(limit=10))
 
 
 def _ai_kpi4_from_aws():
@@ -1720,20 +1607,8 @@ def api_customer_profile(global_id):
     """
     if USE_MOCK:
         return jsonify(_profile_full_mock(global_id))
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        f_customer = ex.submit(lambda: _call_onprem('get_profile', global_id=global_id) or {})
-        f_pii      = ex.submit(lambda: _call_onprem('get_pii_masked', global_id=global_id) or {})
-        f_cons     = ex.submit(lambda: _load_consent_from_s3(global_id).get('consents', []))
-        customer = f_customer.result()
-        pii      = f_pii.result()
-        consents = f_cons.result()
-    customer.update({
-        'ls_user_id': pii.get('ls_user_id'),
-        'name':       pii.get('name'),
-        'email':      pii.get('email'),
-        'mobile':     pii.get('mobile'),
-        'address':    pii.get('address'),
-    })
+    customer = _call_onprem('get_profile', global_id=global_id) or {}
+    consents = _load_consent_from_s3(global_id).get('consents', [])
     return jsonify({
         'global_id': global_id,
         'customer':  customer,
@@ -1926,34 +1801,12 @@ def api_admin_applications():
 @app.route('/ops')
 @login_required
 def ops():
-    if USE_MOCK:
-        cloud_status      = MOCKUP_CLOUD_STATUS
-        domain_flow       = MOCKUP_DOMAIN_FLOW
-        lambda_metrics    = MOCKUP_LAMBDA_METRICS
-        glue_last         = MOCKUP_GLUE_LAST_RUN
-        next_batch        = MOCKUP_NEXT_BATCH
-        recent_errors     = MOCKUP_RECENT_ERRORS
-        tgw               = MOCKUP_TGW
-        vpn               = MOCKUP_VPN
-        vpc_peering       = MOCKUP_VPC_PEERING
-        wearable_realtime = MOCKUP_WEARABLE_REALTIME
-        affiliate_health  = MOCKUP_AFFILIATE_HEALTH
-        backend_services  = MOCKUP_BACKEND_SERVICES
-    else:
-        aws_status        = _ping_cloud_status()
-        cloud_status      = aws_status + MOCKUP_CLOUD_STATUS[-2:]  # AWS 실연동 + GCP mock
-        domain_flow       = _ping_domain_flow()
-        lambda_metrics    = _ping_lambda_metrics()
-        glue_last         = _ping_glue_last_run()
-        next_batch        = _ping_next_batch()
-        recent_errors     = []
-        tgw               = _ping_tgw()       or MOCKUP_TGW
-        vpn               = _ping_vpn()       or MOCKUP_VPN
-        vpc_peering       = _ping_vpc_peering() or MOCKUP_VPC_PEERING
-        wearable_realtime = _ping_wearable_realtime()
-        affiliate_health  = MOCKUP_AFFILIATE_HEALTH  # 계열사 ping은 PrivateAPI 외부 — mock fallback
-        backend_services  = MOCKUP_BACKEND_SERVICES
+    """ops 페이지 — 토폴로지/VPC 카드는 정적, Wearable 만 메모리 엔진.
 
+    이전엔 USE_MOCK=false 시 _ping_* 9 함수 (~40 boto3 API) 호출했으나
+    template 에 전달 안 되는 dead code 였음 → 제거 (5초 지연 원인).
+    실 AWS 데이터는 API 라우트 (/api/network/tgw 등) 로 별도 노출.
+    """
     wearable_snap = wearable_engine.snapshot()
 
     return render_template('ops.html',
@@ -1982,6 +1835,4 @@ def inject_config():
 
 if __name__ == '__main__':
     # threaded=True — SSE 장기 연결 + 일반 요청 동시 처리
-    # debug=False — reloader 끔 (수정 시마다 끊기지 않게)
-    debug = os.environ.get('FLASK_DEBUG', '').lower() in ('1', 'true', 'yes')
-    app.run(debug=debug, port=5001, threaded=True, use_reloader=debug)
+    app.run(debug=True, port=5001, threaded=True)

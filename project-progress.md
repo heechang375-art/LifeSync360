@@ -883,7 +883,7 @@ ONPREM_QUERY_LAMBDA=lifesync-onprem-customer-query
 | 구분 | 변경 |
 |---|---|
 | 회원가입 흐름 제거 | `/api/register` + `/register` + `register.html` + `_resolve_global_id` + `PROFILE_SYNC_LAMBDA` 환경변수 |
-| JWT 발급 → 사전 발급 전환 | `make_jwt()` 제거 → `_get_preset_token()` (SSM `/lifesync360/jwt-token` 1회 캐시). 운영자가 토큰 사전 박음 |
+| JWT 발급 시크릿 SSM 화 | SSM `/lifesync360/jwt-secret` (HS256 대칭키) 만 사용 — secret 으로 platform 이 토큰 직접 발급/검증. `/lifesync360/jwt-token` 별도 안 만듦 (2026-05-20 정정) |
 | 죽은 API 제거 (Group 1) | `/api/upgrade-actions` + `/api/my-products` + `MOCK_MY_PRODUCTS` + `MOCK_CONSENTED_KEYS` + `upgrade_actions_engine.py` 통째 |
 | 캠페인 복원 | `/api/campaigns` + `MOCK_CAMPAIGNS_BY_GRADE` 다시 살림 (홈 탭 캠페인 배너 표시 위해) |
 | 추천 top10 제한 | `_fetch_products` LIMIT 20 → 10, `_recommendations_mock` flat[:20] → flat[:10] |
