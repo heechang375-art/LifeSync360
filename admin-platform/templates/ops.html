@@ -68,18 +68,79 @@
     </div>
 </section>
 
-<!-- WEARABLE 실시간 데이터 (6 KPI — 설계서 V5) -->
+<!-- WEARABLE 실시간 — KPI 4 (활성 / 송신율 / RED / YELLOW) -->
 <section class="section">
-    <div class="section-title">❤ WEARABLE 실시간 데이터 <span class="pipe">|</span> <span class="sub">(KINESIS)</span></div>
-    <div class="grid grid-6">
-        {% for w in wearable %}
-        <div class="s3-card">
-            <div class="s3-icon">{{ w.icon }}</div>
-            <div class="s3-label">{{ w.label }}</div>
-            <div class="s3-value">{{ w.value }}</div>
-            <div class="s3-note">{{ w.sub }}</div>
+    <div class="section-title">❤ WEARABLE 실시간 <span class="pipe">|</span> <span class="sub">(KINESIS · SSE 3s)</span><span class="ts" id="ts-we-kpi">갱신: --:--:--</span></div>
+    <div class="grid grid-4">
+        {% for k in wearable_kpi %}
+        <div class="kpi" style="border-left-color: {{ k.accent }};">
+            <div class="kpi-label">{{ k.label }}</div>
+            <div class="kpi-value" id="we-kpi-value-{{ loop.index0 }}" style="color: {{ k.accent }};">{{ k.value }}</div>
+            <div class="kpi-sub"   id="we-kpi-sub-{{ loop.index0 }}">{{ k.sub }}</div>
         </div>
         {% endfor %}
+    </div>
+</section>
+
+<!-- 🔴 건강 RED — AHA/WHO 임상 임계 위반 (즉시 조치) -->
+<section class="section">
+    <div class="section-title" style="color:#dc2626;">🔴 건강 RED <span class="pipe">|</span> <span class="sub">AHA/WHO 임상 임계 — 즉시 조치</span><span class="ts" id="ts-we-red">갱신: --:--:--</span></div>
+    <div class="table-wrap">
+        <table>
+            <thead><tr>
+                <th style="width:80px;">시각</th>
+                <th style="width:120px;">global_id</th>
+                <th style="width:80px;">이름</th>
+                <th style="width:60px; text-align:right;">심박</th>
+                <th style="width:60px; text-align:right;">SpO2</th>
+                <th style="width:70px; text-align:right;">스트레스</th>
+                <th>사유</th>
+            </tr></thead>
+            <tbody id="we-red-tbody">
+                {% for r in wearable_red %}
+                <tr>
+                    <td class="mono">{{ r.time }}</td>
+                    <td class="mono">{{ r.gid }}</td>
+                    <td>{{ r.name }}</td>
+                    <td class="mono" style="text-align:right; color:#dc2626; font-weight:700;">{{ r.hr }}</td>
+                    <td class="mono" style="text-align:right; color:#dc2626;">{{ r.spo2 }}</td>
+                    <td class="mono" style="text-align:right;">{{ r.stress }}</td>
+                    <td style="color:#dc2626;">{{ r.reasons }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<!-- 🟡 건강 YELLOW — 경계 영역 (모니터링) -->
+<section class="section">
+    <div class="section-title" style="color:#d97706;">🟡 건강 YELLOW <span class="pipe">|</span> <span class="sub">경계 영역 — 모니터링</span><span class="ts" id="ts-we-yellow">갱신: --:--:--</span></div>
+    <div class="table-wrap">
+        <table>
+            <thead><tr>
+                <th style="width:80px;">시각</th>
+                <th style="width:120px;">global_id</th>
+                <th style="width:80px;">이름</th>
+                <th style="width:60px; text-align:right;">심박</th>
+                <th style="width:60px; text-align:right;">SpO2</th>
+                <th style="width:70px; text-align:right;">스트레스</th>
+                <th>사유</th>
+            </tr></thead>
+            <tbody id="we-yellow-tbody">
+                {% for r in wearable_yellow %}
+                <tr>
+                    <td class="mono">{{ r.time }}</td>
+                    <td class="mono">{{ r.gid }}</td>
+                    <td>{{ r.name }}</td>
+                    <td class="mono" style="text-align:right;">{{ r.hr }}</td>
+                    <td class="mono" style="text-align:right;">{{ r.spo2 }}</td>
+                    <td class="mono" style="text-align:right;">{{ r.stress }}</td>
+                    <td style="color:#d97706;">{{ r.reasons }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </section>
 
@@ -94,4 +155,35 @@
     </div>
     {% endfor %}
 </section>
+
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+    var kpiCount = {{ wearable_kpi|length }};
+    var esc = AutoRefresh.escapeHtml;
+
+    function rowHealth(r) {
+        return '<tr>' +
+            '<td class="mono">' + esc(r.time) + '</td>' +
+            '<td class="mono">' + esc(r.gid)  + '</td>' +
+            '<td>' + esc(r.name) + '</td>' +
+            '<td class="mono" style="text-align:right;">' + esc(r.hr)     + '</td>' +
+            '<td class="mono" style="text-align:right;">' + esc(r.spo2)   + '</td>' +
+            '<td class="mono" style="text-align:right;">' + esc(r.stress) + '</td>' +
+            '<td>' + esc(r.reasons) + '</td>' +
+        '</tr>';
+    }
+    AutoRefresh.subscribe('/stream/wearable', function (data) {
+        var kpi = data.kpi || [];
+        for (var i = 0; i < kpiCount && i < kpi.length; i++) {
+            AutoRefresh.setText('we-kpi-value-' + i, kpi[i].value || '');
+            AutoRefresh.setText('we-kpi-sub-'   + i, kpi[i].sub   || '');
+        }
+        AutoRefresh.replaceTbody('we-red-tbody',    (data.red    || []).map(rowHealth).join(''));
+        AutoRefresh.replaceTbody('we-yellow-tbody', (data.yellow || []).map(rowHealth).join(''));
+        AutoRefresh.stampNow('ts-we-kpi');
+        AutoRefresh.stampNow('ts-we-red');
+        AutoRefresh.stampNow('ts-we-yellow');
+    });
+});
+</script>
 {% endblock %}

@@ -1,17 +1,24 @@
 import os
 import functools
+import json
+import random
+import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 import boto3
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, Response, render_template, request, redirect, url_for, session, jsonify, stream_with_context
+
+import wearable_engine
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'admin-dev-secret-32bytes-lifesync!!')  # TODO: 운영 배포 시 env var로 교체
 
 USE_MOCK             = os.environ.get('USE_MOCK', 'true').lower() != 'false'  # default true, 명시 'false'만 비Mock
 ADMIN_USER           = os.environ.get('ADMIN_USER', 'admin')
-ADMIN_PASS           = os.environ['ADMIN_PASSWORD']
+ADMIN_PASS           = os.environ.get('ADMIN_PASSWORD', 'admin123')
 DYNAMO_TABLE         = os.environ.get('DYNAMO_TABLE', 'lifesync-scores')
 DDB_SEGMENT_TABLE    = os.environ.get('DDB_SEGMENT_TABLE',    'analytics_segment_daily')
 DDB_DEMOGRAPHIC_TABLE= os.environ.get('DDB_DEMOGRAPHIC_TABLE','analytics_demographic_daily')
@@ -68,6 +75,15 @@ from mockup_data import (
     MOCKUP_NET_AWS_CONNECTIVITY, MOCKUP_NET_GCP, MOCKUP_NET_ONPREM,
     MOCKUP_NET_WEARABLE, MOCKUP_NET_API_ENDPOINTS,
 )
+
+
+# ── Wearable 시연 엔진 부팅 (mock_wearable_batch.json 적재 + 3초 tick) ─
+_wearable_batch_path = os.path.join(os.path.dirname(__file__), 'mock_wearable_batch.json')
+try:
+    wearable_engine.load_initial(_wearable_batch_path)
+    wearable_engine.start_loop(interval=3.0)
+except FileNotFoundError:
+    pass   # 운영 단계에선 Kinesis consumer 로 교체 예정 — 파일 없어도 admin 부팅 OK
 
 
 # ── DB / DynamoDB 헬퍼 ────────────────────────────────
@@ -199,41 +215,89 @@ def _ping_cloud_status():
 
 
 def _ping_s3_ingestion():
-    """S3 Data Ingestion — raw bucket 적재 현황."""
+    """S3 Data Ingestion — lifesync-* 다중 버킷.
+
+    빠른 응답을 위해:
+    - raw_bucket_files / total_size_bytes: CloudWatch `AWS/S3` 일배치 metric (NumberOfObjects, BucketSizeBytes)
+    - today_ingested / iot_count: lifesync-raw 의 도메인별 prefix list_objects_v2 (MaxKeys 1000)
+    - last_upload: 도메인별 list_objects_v2 (MaxKeys 5) → 정렬 → 첫 건
+    """
+    from datetime import datetime, timezone as _tz, timedelta as _td
+    s3 = _boto('s3')
+    cw = _boto('cloudwatch')
+
+    buckets_env = os.environ.get('LIFESYNC_S3_BUCKETS', '')
+    if buckets_env:
+        buckets = [b.strip() for b in buckets_env.split(',') if b.strip()]
+    else:
+        try:
+            buckets = [b['Name'] for b in s3.list_buckets().get('Buckets', [])
+                       if b['Name'].startswith('lifesync-')]
+        except Exception:
+            buckets = []
+
     raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', '')
-    if not raw_bucket:
-        return {'raw_bucket_files': 0, 'today_ingested': 0, 'iot_count': 0,
-                'last_upload': {}, 'failed_count': 0}
-    from datetime import datetime, timezone
-    today_prefix = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    try:
-        s3 = _boto('s3')
-        paginator = s3.get_paginator('list_objects_v2')
-        total = today = iot = 0
-        latest = None
-        for page in paginator.paginate(Bucket=raw_bucket):
-            for o in page.get('Contents', []):
-                total += 1
-                if today_prefix in o['Key']:
-                    today += 1
-                if 'wearable' in o['Key'].lower() or 'iot' in o['Key'].lower():
-                    iot += 1
-                if latest is None or o['LastModified'] > latest['LastModified']:
-                    latest = o
-        return {
-            'raw_bucket_files': total,
-            'today_ingested':   today,
-            'iot_count':        iot,
-            'last_upload': {
-                'time': latest['LastModified'].strftime('%H:%M') if latest else '-',
-                'file': latest['Key'].split('/')[-1] if latest else '-',
-                'size_mb': round(latest['Size'] / 1024 / 1024, 2) if latest else 0,
-            } if latest else {},
-            'failed_count': 0,
-        }
-    except Exception:
-        return {'raw_bucket_files': 0, 'today_ingested': 0, 'iot_count': 0,
-                'last_upload': {}, 'failed_count': 0}
+    domains = ['bank', 'card', 'insurance', 'securities', 'healthcare', 'hospital', 'online_insurance', 'wearable']
+    today = datetime.now(_tz(_td(hours=9))).strftime('%Y-%m-%d')
+    now_utc = datetime.now(_tz.utc)
+    start_utc = now_utc - _td(days=2)
+
+    total = 0
+    total_size = 0
+    for b in buckets:
+        try:
+            r = cw.get_metric_statistics(
+                Namespace='AWS/S3', MetricName='NumberOfObjects',
+                Dimensions=[{'Name': 'BucketName', 'Value': b},
+                            {'Name': 'StorageType', 'Value': 'AllStorageTypes'}],
+                StartTime=start_utc, EndTime=now_utc, Period=86400, Statistics=['Average'],
+            )
+            dp = sorted(r.get('Datapoints', []), key=lambda d: d['Timestamp'], reverse=True)
+            if dp: total += int(dp[0]['Average'])
+        except Exception:
+            pass
+        try:
+            r = cw.get_metric_statistics(
+                Namespace='AWS/S3', MetricName='BucketSizeBytes',
+                Dimensions=[{'Name': 'BucketName', 'Value': b},
+                            {'Name': 'StorageType', 'Value': 'StandardStorage'}],
+                StartTime=start_utc, EndTime=now_utc, Period=86400, Statistics=['Average'],
+            )
+            dp = sorted(r.get('Datapoints', []), key=lambda d: d['Timestamp'], reverse=True)
+            if dp: total_size += int(dp[0]['Average'])
+        except Exception:
+            pass
+
+    today_cnt = 0
+    iot_cnt = 0
+    latest = None
+    if raw_bucket:
+        for d in domains:
+            try:
+                resp = s3.list_objects_v2(Bucket=raw_bucket, Prefix=f'{d}/dt={today}/', MaxKeys=1000)
+                cnt = resp.get('KeyCount', 0)
+                today_cnt += cnt
+                if d in ('wearable',):
+                    iot_cnt += cnt
+                for o in resp.get('Contents', []):
+                    if latest is None or o['LastModified'] > latest['LastModified']:
+                        latest = o
+            except Exception:
+                continue
+
+    return {
+        'raw_bucket_files': total,
+        'today_ingested':   today_cnt,
+        'iot_count':        iot_cnt,
+        'total_size_bytes': total_size,
+        'bucket_count':     len(buckets),
+        'last_upload': {
+            'time': _utc_to_kst(latest['LastModified']) if latest else '-',
+            'file': latest['Key'].split('/')[-1] if latest else '-',
+            'size_mb': round(latest['Size'] / 1024 / 1024, 2) if latest else 0,
+        } if latest else {},
+        'failed_count': 0,
+    }
 
 
 def _ping_domain_flow():
@@ -293,37 +357,112 @@ def _ping_domain_flow():
 
 
 def _ping_vm_status():
-    """Group/Wearable VM EC2 상태."""
+    """Group/Wearable VM EC2 상태.
+
+    lifesync-*-vpc 동적 발견 → 해당 VPC 내 EC2 만 매칭.
+    group/wearable 구분은 VPC Name 키워드로 결정 (deploy_group 필드).
+    """
     try:
         ec2  = _boto('ec2')
+        vpcs = ec2.describe_vpcs(Filters=[
+            {'Name': 'tag:Name', 'Values': ['lifesync-*-vpc']},
+        ])
+        vpc_map = {
+            v['VpcId']: next((t['Value'] for t in v.get('Tags', []) if t['Key'] == 'Name'), '')
+            for v in vpcs.get('Vpcs', [])
+        }
+        if not vpc_map:
+            return []
         resp = ec2.describe_instances(Filters=[
-            {'Name': 'tag:Project', 'Values': ['lifesync']},
+            {'Name': 'vpc-id', 'Values': list(vpc_map.keys())},
             {'Name': 'instance-state-name', 'Values': ['running', 'pending', 'stopping', 'stopped']},
         ])
         out = []
         for r in resp.get('Reservations', []):
             for inst in r.get('Instances', []):
-                name = next((t['Value'] for t in inst.get('Tags', []) if t['Key'] == 'Name'), '-')
+                tags     = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                vpc_name = vpc_map.get(inst.get('VpcId'), '')
+                if   'group'    in vpc_name: deploy_group = 'group-app'
+                elif 'wearable' in vpc_name: deploy_group = 'wearable-app'
+                else:                        deploy_group = 'other'
                 out.append({
-                    'vm_id':   inst['InstanceId'],
-                    'name':    name,
-                    'state':   inst['State']['Name'],
-                    'cpu_pct': 0, 'mem_pct': 0,  # CloudWatch agent metric으로 별도 보강
+                    'vm_id':        inst['InstanceId'],
+                    'name':         tags.get('Name', '-'),
+                    'state':        inst['State']['Name'],
+                    'deploy_group': deploy_group,
+                    'vpc':          vpc_name,
+                    'cpu_pct': 0,
+                    'mem_pct': None,  # CWAgent 미설치 — 별도 배포 후 보강
                 })
+        _boost_vm_cpu(out)
         return out
     except Exception:
         return []
 
 
-def _ping_lambda_metrics():
-    """주요 Lambda 함수 호출률 (최근 1h)."""
+def _boost_vm_cpu(rows):
+    """AWS/EC2 CPUUtilization 최근 10분 평균을 batch 로 가져와 cpu_pct 보강.
+
+    get_metric_data 1 회 호출로 모든 인스턴스를 한꺼번에. 실패 시 0 유지.
+    """
+    if not rows:
+        return
     from datetime import datetime, timezone, timedelta
-    fns = [
-        'lifesync-batch-loader-lambda',
-        'lifesync-ingest-lambda',
-        'lifesync-recommendation-engine-lambda',
-        'lifesync-wearable-stream-lambda',
-    ]
+    try:
+        cw    = _boto('cloudwatch')
+        now   = datetime.now(timezone.utc)
+        start = now - timedelta(minutes=10)
+        queries = [{
+            'Id': f'cpu{i}',
+            'MetricStat': {
+                'Metric': {
+                    'Namespace': 'AWS/EC2',
+                    'MetricName': 'CPUUtilization',
+                    'Dimensions': [{'Name': 'InstanceId', 'Value': r['vm_id']}],
+                },
+                'Period': 300, 'Stat': 'Average',
+            },
+            'ReturnData': True,
+        } for i, r in enumerate(rows)]
+        res = cw.get_metric_data(MetricDataQueries=queries, StartTime=start, EndTime=now)
+        by_id = {m['Id']: m.get('Values') or [] for m in res.get('MetricDataResults', [])}
+        for i, r in enumerate(rows):
+            vals = by_id.get(f'cpu{i}', [])
+            if vals:
+                r['cpu_pct'] = round(vals[0], 1)
+    except Exception:
+        pass
+
+
+def _list_lifesync_lambdas():
+    """`LAMBDA_PREFIX_FILTER` (기본 `lifesync-`) prefix Lambda 함수 자동 발견.
+
+    boto3 lambda.list_functions paginator — 신규 함수 배포 시 코드 변경 없이 자동 포함.
+    실패 시 빈 list 반환 (호출처 fallback 처리).
+    """
+    prefix = os.environ.get('LAMBDA_PREFIX_FILTER', 'lifesync-')
+    try:
+        paginator = _boto('lambda').get_paginator('list_functions')
+        names = []
+        for page in paginator.paginate():
+            for fn in page.get('Functions', []):
+                name = fn.get('FunctionName', '')
+                if name.startswith(prefix):
+                    names.append(name)
+        return sorted(names)
+    except Exception:
+        return []
+
+
+def _ping_lambda_metrics():
+    """V4 P4 r6 — `lifesync-` prefix Lambda 함수 자동 발견 + CloudWatch 1h 메트릭.
+
+    Invocations / Errors / Duration 합산. 신규 함수 배포 시 자동 포함.
+    """
+    from datetime import datetime, timezone, timedelta
+    fns = _list_lifesync_lambdas()
+    if not fns:
+        return []
     cw  = _boto('cloudwatch')
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=1)
@@ -924,12 +1063,23 @@ def overview():
 @app.route('/dashboard')
 @login_required
 def dashboard():
+    """USE_MOCK=false 시 첫 SSR 부터 실 AWS 데이터 (JS 폴링 첫 tick 대기 X)."""
+    if USE_MOCK:
+        kpi      = MOCKUP_DASH_KPI
+        cloud3   = MOCKUP_DASH_CLOUD3
+        s3_cards = MOCKUP_DASH_S3_5
+        uploads  = MOCKUP_DASH_RECENT_UPLOADS
+    else:
+        kpi      = _stub_aurora_summary()   # Aurora 실패 시 내부 fallback
+        cloud3   = _cloud3_from_aws()
+        s3_cards = _s3_status_cards()
+        uploads  = _uploads_from_s3(limit=5)
     return render_template('dashboard.html',
         active='dashboard',
-        kpi=MOCKUP_DASH_KPI,
-        cloud3=MOCKUP_DASH_CLOUD3,
-        s3_cards=MOCKUP_DASH_S3_5,
-        uploads=MOCKUP_DASH_RECENT_UPLOADS,
+        kpi=kpi,
+        cloud3=cloud3,
+        s3_cards=s3_cards,
+        uploads=uploads,
     )
 
 
@@ -1115,8 +1265,8 @@ def ai():
 
     return render_template('ai.html',
         active='ai',
-        # 화이트 샘플 전용
-        kpi4=MOCKUP_AI_KPI4,
+        # USE_MOCK=false 시 첫 SSR 부터 Lambda CloudWatch 활용
+        kpi4=MOCKUP_AI_KPI4 if USE_MOCK else _ai_kpi4_from_aws(),
         trend_7d=recommend_trend,
         top10=top10,
         cat_donut=MOCKUP_AI_CAT_DONUT,
@@ -1350,6 +1500,185 @@ def api_cloud_status():
     return jsonify({'aws': _ping_cloud_status(), 'gcp': _stub_gcp_status() or MOCKUP_GCP_STATUS_DETAIL})
 
 
+def _ec2_lifesync_count():
+    """EC2 인스턴스 카운트 — Tag Project=lifesync 또는 LifeSync, running 만. 가벼운 1 API."""
+    try:
+        ec2 = _boto('ec2')
+        resp = ec2.describe_instances(Filters=[
+            {'Name': 'instance-state-name', 'Values': ['running']},
+            {'Name': 'tag:Project',         'Values': ['lifesync', 'LifeSync', 'LIFESYNC']},
+        ])
+        return sum(len(r.get('Instances', [])) for r in resp.get('Reservations', []))
+    except Exception:
+        return 0
+
+
+def _cloud3_from_aws():
+    """AWS 8 영역 ping → dashboard AWS 카드 1개 (RDS/DDB/Redis/ECS/ALB/S3/Lambda/EC2).
+
+    GCP / On-Prem 은 stub / mock fallback. CloudWatch metric 회피 — 빠른 describe 만.
+    """
+    aws_list = _ping_cloud_status() or []
+    ec2_count    = _ec2_lifesync_count()
+    lambda_count = len(_list_lifesync_lambdas() or [])
+
+    extra = []
+    if lambda_count: extra.append({'service': 'AWS Lambda', 'state': 'UP', 'note': f'{lambda_count} functions'})
+    if ec2_count:    extra.append({'service': 'AWS EC2',    'state': 'UP', 'note': f'{ec2_count} instances'})
+    full_list = aws_list + extra
+    up = sum(1 for x in full_list if x.get('state') == 'UP')
+
+    cards = [dict(c) for c in MOCKUP_DASH_CLOUD3]   # baseline copy
+    cards[0]['state'] = f'{up} / {len(full_list)} 정상'
+    cards[0]['sub']   = ' · '.join(x['service'].replace('AWS ', '') for x in full_list)
+
+    gcp = _stub_gcp_status() or {}
+    if gcp.get('state'):
+        cards[1]['state'] = gcp.get('state', cards[1]['state'])
+        cards[1]['sub']   = gcp.get('note',  cards[1]['sub'])
+
+    return cards
+
+
+@app.route('/api/dashboard/cloud3')
+@login_required
+def api_dashboard_cloud3():
+    """dashboard.html 3카드 (AWS / GCP / On-Prem) — list of 3.
+
+    USE_MOCK=false 시 `_ping_cloud_status` 결과를 AWS 카드 1개로 집계.
+    """
+    if USE_MOCK:
+        return jsonify(MOCKUP_DASH_CLOUD3)
+    return jsonify(_cloud3_from_aws())
+
+
+_BADGE_MAP = {
+    'bank':       {'badge': 'BANK', 'badge_bg': '#dbeafe', 'badge_color': '#2563eb'},
+    'card':       {'badge': 'CARD', 'badge_bg': '#fef3c7', 'badge_color': '#d97706'},
+    'insurance':  {'badge': 'INS',  'badge_bg': '#fef9c3', 'badge_color': '#a16207'},
+    'securities': {'badge': 'SEC',  'badge_bg': '#ede9fe', 'badge_color': '#7c3aed'},
+    'healthcare': {'badge': 'HLT',  'badge_bg': '#dcfce7', 'badge_color': '#16a34a'},
+    'hospital':   {'badge': 'HOS',  'badge_bg': '#fce7f3', 'badge_color': '#be185d'},
+    'wearable':   {'badge': 'IOT',  'badge_bg': '#e0e7ff', 'badge_color': '#4338ca'},
+    'online_insurance': {'badge': 'ONI', 'badge_bg': '#ccfbf1', 'badge_color': '#0f766e'},
+}
+
+
+_KST = timezone(timedelta(hours=9)) if 'timedelta' in dir() else None
+
+def _utc_to_kst(dt):
+    """UTC datetime → KST HH:MM:SS."""
+    from datetime import timedelta, timezone as _tz
+    kst = dt.astimezone(_tz(timedelta(hours=9)))
+    return kst.strftime('%H:%M:%S')
+
+
+def _uploads_from_s3(limit=5):
+    """lifesync-raw 최근 업로드 N건. 시간 KST. 도메인 prefix × 오늘 dt 만 list_objects_v2 — 빠름."""
+    raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', '')
+    if not raw_bucket:
+        return MOCKUP_DASH_RECENT_UPLOADS[:limit]
+    from datetime import datetime, timezone as _tz, timedelta as _td
+    today = datetime.now(_tz(_td(hours=9))).strftime('%Y-%m-%d')
+    domains = ['bank', 'card', 'insurance', 'securities', 'healthcare', 'hospital', 'online_insurance', 'wearable']
+    objs = []
+    try:
+        s3 = _boto('s3')
+        for d in domains:
+            resp = s3.list_objects_v2(Bucket=raw_bucket, Prefix=f'{d}/dt={today}/', MaxKeys=10)
+            objs.extend(resp.get('Contents', []))
+        objs.sort(key=lambda o: o['LastModified'], reverse=True)
+        out = []
+        for o in objs[:limit]:
+            key = o['Key']
+            prefix = key.split('/')[0].lower() if '/' in key else ''
+            badge = _BADGE_MAP.get(prefix, {'badge': prefix.upper()[:4] or '?', 'badge_bg': '#f1f5f9', 'badge_color': '#64748b'})
+            size_mb = o['Size'] / 1024 / 1024
+            out.append({
+                'time': _utc_to_kst(o['LastModified']),
+                'file': key.split('/')[-1],
+                'badge':       badge['badge'],
+                'badge_bg':    badge['badge_bg'],
+                'badge_color': badge['badge_color'],
+                'size': f'{size_mb:.1f} MB' if size_mb >= 0.1 else f'{o["Size"]/1024:.1f} KB',
+            })
+        return out or MOCKUP_DASH_RECENT_UPLOADS[:limit]
+    except Exception:
+        return MOCKUP_DASH_RECENT_UPLOADS[:limit]
+
+
+@app.route('/api/dashboard/uploads')
+@login_required
+def api_dashboard_uploads():
+    """dashboard.html 최근 업로드 파일 표.
+
+    USE_MOCK=false 시 lifesync-raw bucket 의 `list_objects_v2` 결과 최신 10건.
+    """
+    if USE_MOCK:
+        return jsonify(MOCKUP_DASH_RECENT_UPLOADS)
+    return jsonify(_uploads_from_s3(limit=5))
+
+
+def _ai_kpi4_from_aws():
+    """ai.html KPI 4 — Lambda CloudWatch metric 활용. Aurora 실패 시 mock fallback."""
+    cards = [dict(c) for c in MOCKUP_AI_KPI4]   # baseline copy
+    try:
+        metrics = _ping_lambda_metrics() or []
+        rec  = next((m for m in metrics if 'recommendation' in m['fn']), None)
+        ingest = next((m for m in metrics if 'ingest' in m['fn']), None)
+        if rec:
+            cards[0]['value'] = f'{rec["invocations_1h"]:,}'
+            cards[0]['sub']   = f'lifesync-recommendation-engine · 최근 1h'
+        if ingest:
+            cards[1]['value'] = f'{ingest["invocations_1h"]:,}'
+            cards[1]['sub']   = f'lifesync-ingest · 최근 1h'
+    except Exception:
+        pass
+    return cards
+
+
+@app.route('/api/ai/kpi4')
+@login_required
+def api_ai_kpi4():
+    """ai.html 상단 4 KPI.
+
+    USE_MOCK=false 시 Lambda CloudWatch metric 일부 활용 (recommendation / ingest 1h invocations).
+    """
+    if USE_MOCK:
+        return jsonify(MOCKUP_AI_KPI4)
+    return jsonify(_ai_kpi4_from_aws())
+
+
+@app.route('/api/ops/wearable')
+@login_required
+def api_ops_wearable():
+    """ops.html Wearable 실시간 — KPI 5 + RED/YELLOW/DEVICE 표.
+
+    응답 스키마: `{kpi:[...5], red:[...], yellow:[...], device:[...]}`.
+    SSE 비대응 클라이언트 폴백용 (실시간은 `/stream/wearable` 사용).
+    """
+    return jsonify(wearable_engine.snapshot())
+
+
+@app.route('/stream/wearable')
+@login_required
+def stream_wearable():
+    """Wearable 실시간 SSE — 3초마다 snapshot push.
+
+    클라이언트: `new EventSource('/stream/wearable')`.
+    운영: ALB / Nginx 의 proxy_buffering off 필요 (text/event-stream).
+    """
+    @stream_with_context
+    def gen():
+        while True:
+            yield f"data: {json.dumps(wearable_engine.snapshot(), ensure_ascii=False)}\n\n"
+            time.sleep(3)
+    return Response(gen(), mimetype='text/event-stream', headers={
+        'Cache-Control':     'no-cache',
+        'X-Accel-Buffering': 'no',   # Nginx 버퍼링 비활성
+    })
+
+
 def _profile_full_mock(global_id):
     """P2 r44 시연 응답 — 운영 `_call_onprem('get_all')` 와 동일 구조 (시연↔운영 통일).
 
@@ -1415,11 +1744,22 @@ def api_customer_profile(global_id):
 @app.route('/api/customer/ai-result/<global_id>')
 @login_required
 def api_customer_ai_result(global_id):
-    """P2 r45. DDB lifesync_customer_result GetItem."""
+    """P2 r45. DDB lifesync_customer_result — composite key (global_id HASH + update_time RANGE).
+
+    Cloud Run 일배치 PutItem 으로 시계열 누적되므로 query + ScanIndexForward=False + Limit=1
+    로 최신 1건 반환.
+    """
     if USE_MOCK:
         return jsonify(MOCK_SCORES.get(global_id, {}))
     try:
-        return jsonify(get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item', {}))
+        from boto3.dynamodb.conditions import Key
+        resp = get_dynamo_table().query(
+            KeyConditionExpression=Key('global_id').eq(global_id),
+            ScanIndexForward=False,
+            Limit=1,
+        )
+        items = resp.get('Items', [])
+        return jsonify(items[0] if items else {})
     except Exception:
         return jsonify({})
 
@@ -1489,15 +1829,16 @@ def api_vm_group():
     if USE_MOCK:
         return jsonify(MOCKUP_AFFILIATE_HEALTH)
     rows = _ping_vm_status() or []
-    return jsonify([r for r in rows if 'wearable' not in str(r.get('tag', '')).lower()])
+    return jsonify([r for r in rows if r.get('deploy_group') == 'group-app'])
 
 
 @app.route('/api/vm/wearable')
 @login_required
 def api_vm_wearable():
     """P4 r59. Wearable VM + CloudWatch custom metric (LifeSync/Wearable)."""
+    rows = _ping_vm_status() if not USE_MOCK else []
     return jsonify({
-        'instances': _ping_vm_status() if not USE_MOCK else [],
+        'instances': [r for r in rows if r.get('deploy_group') == 'wearable-app'],
         'metrics'  : _ping_wearable_metrics() if not USE_MOCK else MOCKUP_WEARABLE_REALTIME,
     })
 
@@ -1613,6 +1954,8 @@ def ops():
         affiliate_health  = MOCKUP_AFFILIATE_HEALTH  # 계열사 ping은 PrivateAPI 외부 — mock fallback
         backend_services  = MOCKUP_BACKEND_SERVICES
 
+    wearable_snap = wearable_engine.snapshot()
+
     return render_template('ops.html',
         active='ops',
         topology=MOCKUP_NET_TOPOLOGY,
@@ -1622,7 +1965,9 @@ def ops():
         net_conn=MOCKUP_NET_AWS_CONNECTIVITY,
         net_gcp=MOCKUP_NET_GCP,
         net_onprem=MOCKUP_NET_ONPREM,
-        wearable=MOCKUP_NET_WEARABLE,
+        wearable_kpi=wearable_snap['kpi'],
+        wearable_red=wearable_snap['red'],
+        wearable_yellow=wearable_snap['yellow'],
         endpoints=MOCKUP_NET_API_ENDPOINTS,
     )
 
@@ -1636,4 +1981,7 @@ def inject_config():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+    # threaded=True — SSE 장기 연결 + 일반 요청 동시 처리
+    # debug=False — reloader 끔 (수정 시마다 끊기지 않게)
+    debug = os.environ.get('FLASK_DEBUG', '').lower() in ('1', 'true', 'yes')
+    app.run(debug=debug, port=5001, threaded=True, use_reloader=debug)

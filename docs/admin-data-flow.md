@@ -384,8 +384,116 @@ Admin (Private Subnet EC2 — VPN/SSM 접근)
 
 ---
 
-## 6. 변경 이력
+## 6. 자동 갱신 & 차트 구현
+
+### 6.1 한눈에 — 자동 갱신 적용 현황 (2026-05-20)
+
+| 페이지 | 자동 갱신 영역 | 방식 | 주기 | 호출 |
+|---|---|---|---|---|
+| **dashboard** | KPI 9 + Cloud 3 + S3 5 + 최근 업로드 | JS 폴링 | **60s** | `/api/dashboard/summary` · `/api/dashboard/cloud3` · `/api/s3/status` · `/api/dashboard/uploads` |
+| **ops** Wearable | KPI 5 + 건강 RED/YELLOW + 디바이스 배터리 표 3개 | **SSE** | **3s** push | `/stream/wearable` (폴백 `/api/ops/wearable`) |
+| **ai** | 상단 4 KPI (차트는 페이지 로드 시만) | JS 폴링 | **300s** | `/api/ai/kpi4` |
+| **users** | 자동 갱신 X (사용자 검색 입력 페이지) | — | — | — |
+
+> 신설 라우트: `/api/dashboard/cloud3`, `/api/dashboard/uploads`, `/api/ai/kpi4`, `/api/ops/wearable`, **`/stream/wearable` (SSE)**
+
+### 6.1-a Wearable 실시간 — 데이터 의미 & 분류 기준
+
+화면 KPI 의 "심박수 72" 가 누구 건지 정의 안 됐었음 → 모든 사용자 평균은 운영자가 액션 못 함. **이상/이상 가능성 대상자만 추려서 노출** 로 재설계.
+
+**데이터 출처** (Kinesis Stream `wearable_batch_v1`, 100 records/batch · 3초마다)
+```
+record = {device_id, event_time, ls_user_id, global_id, payload: {
+  heart_rate, steps, stress_score, spo2_pct, battery_pct, ...
+}}
+```
+
+**의학/표준 임계치 (`wearable_engine.classify`)**
+
+| 지표 | 정상 | YELLOW (모니터링) | RED (즉시 조치) | 근거 |
+|---|---|---|---|---|
+| heart_rate | 60-100 bpm | 50-59 / 101-119 | < 50 (서맥) / ≥ 120 (현저한 빈맥) | AHA + ACC/AHA/HRS bradycardia <50 |
+| spo2_pct | ≥ 95% | 90-94% (mild hypoxemia) | < 90% (clinical emergency) | WHO 임상 알람 |
+| stress_score | 0-50 | 51-75 (medium) | ≥ 76 (high) | Garmin Firstbeat 0-100 |
+| battery_pct | ≥ 30% | 15-29% | < 15% | Fitrockr / 일반 디바이스 |
+
+→ heart/spo2/stress 는 건강(RED/YELLOW), battery 는 **별도 디바이스 알람** (액션 주체 다름 — 의료팀 vs 운영팀).
+
+**PII 마스킹** — admin 도 풀네임/풀 ID 안 보임
+- global_id → `G00023***` (앞 5자리 + 마스킹)
+- 이름 → `김**` (성씨는 global_id 끝자리로 결정적 매핑)
+
+**시연 단계 데이터 흐름** (운영 단계 교체 포인트 명시)
+```
+admin 부팅 시 mock_wearable_batch.json (100 records) → 메모리 적재
+        ↓ 운영 단계: Kinesis Stream consumer 로 교체
+wearable_engine._state['latest']   = {global_id: record}
+        ↓ 운영 단계: DynamoDB wearable_latest{global_id}
+wearable_engine.tick (3초마다, threading.Thread daemon)
+  ├ 100명 중 30명 랜덤 + payload 각 지표에 noise (±5/±1/±5/-0~1)
+  ├ classify(rec) → RED/YELLOW/DEVICE 사유 list
+  └ deque (maxlen 30) 에 시계열 로그 push
+        ↓
+/stream/wearable SSE → ops.html EventSource → DOM 일부만 갱신
+```
+
+**운영 단계 교체 시 변경 위치**
+- `wearable_engine.load_initial(path)` → Kinesis consumer 핸들러
+- `wearable_engine._state['latest']` 메모리 dict → DynamoDB get_item
+- `wearable_engine._state['red/yellow/device']` deque → DynamoDB `anomaly_event` query
+- `wearable_engine.classify` 함수는 운영 단계에서도 그대로 사용 가능 (또는 Vertex AI risk_score 로 교체)
+
+### 6.2 동작 방식 (3줄 요약)
+
+1. **페이지 로드** = 기존 SSR + 인라인 SVG 그대로 (첫 화면은 즉시)
+2. **로드 후** = `static/js/auto-refresh.js` 가 주기적 fetch → 변경된 textContent 만 교체
+3. **화면 깜빡임 0** — innerHTML 통째 교체 X, 값이 같으면 DOM 손도 안 댐
+
+### 6.3 깜빡임 방지 4종
+
+| 기법 | 효과 |
+|---|---|
+| `textContent !== next` 비교 후 setText | 값 같으면 DOM mutation 0 — 깜빡임 / reflow 차단 |
+| `document.hidden` 감지 (visibilitychange) | 백그라운드 탭일 때 폴링 즉시 중지 → CPU/네트워크 절약 |
+| `inflight` 가드 | 응답 지연 시 중복 fetch 차단 |
+| 응답 실패는 무시 (`Promise.allSettled`) | 일시 5xx / 네트워크 끊김 → 사용자 화면에 노출 X |
+
+### 6.4 차트 — 인라인 SVG (자동 갱신 대상 X)
+
+5종 차트 (7일 추이 막대+선 / 카테고리 도넛 / 연령 진행바 / 점수 히스토그램 / KPI 카드) 는 Jinja2 가 SVG 좌표를 페이지 로드 시 계산.
+새 데이터 보려면 F5. **이유**: DOM 교체 시 SVG 좌표를 클라이언트에서 재계산해야 하는데 Jinja2 식이 안 풀림 → cost 가 큼.
+필요 시 Phase 3 에서 ai.html 7일 추이만 Chart.js 로 교체.
+
+| 차트 | 위치 | 라인 |
+|---|---|---|
+| 막대+선 (7일 추이) | ai.html | 31~56 |
+| 도넛 (카테고리) | ai.html | 89~102 |
+| 진행바 (연령) | ai.html | 117~127 |
+| 히스토그램 (점수 분포) | ai.html | 209~218 |
+| KPI 카드 | dashboard/ai/ops | — |
+
+### 6.5 옵션 비교
+
+| 옵션 | 인프라 영향 | 적용 위치 | 채택 여부 |
+|---|---|---|---|
+| **JS 폴링** | 변경 0 | 잦음/일배치 데이터 — 60~300s | ✅ **채택 (dashboard / ai)** |
+| **SSE** | ALB / Nginx `proxy_buffering off` + Flask `threaded=True` | 실시간 알람 (3s push) | ✅ **채택 (ops Wearable)** |
+| WebSocket | ALB→ws://, sticky session | 양방향 알람 | 미채택 (복잡) |
+| Chart.js | +70KB JS | 인터랙티브 차트 | Phase 3 후보 (ai 7일 추이) |
+
+### 6.6 향후 단계
+
+- **Phase 2** (완료 2026-05-20): dashboard/ai 는 JS 폴링, ops Wearable 은 SSE 3s push
+- **Phase 3** (운영 단계): Wearable 메모리 엔진 → Kinesis consumer + DynamoDB / ai 7일 추이 → Chart.js / C360 에 wearable 박스 신설 (선택한 1명 latest + 이상 이력)
+
+---
+
+## 7. 변경 이력
 
 | 일자 | 변경 |
 |---|---|
 | 2026-05-18 | 23 API ↔ read source ↔ write 적재 흐름 매핑 + 결정/TODO + 운영 체크리스트 정리 (신규) |
+| 2026-05-19 | §6 실시간성 + 차트 구현 방식 추가 — 현재 SSR/SVG 구현 + 등급별 분류 + Phase 1~3 권장 |
+| 2026-05-20 | §6 한눈에 표 중심으로 재정리 + 자동 갱신 (JS 폴링) 실제 구현 반영 — dashboard 60s / ai 300s, 깜빡임 방지 4종 |
+| 2026-05-20 | **ops Wearable 재설계** — 평균 KPI 제거 + AHA/WHO/Firstbeat 의학 기준 분류 (RED/YELLOW/디바이스) + SSE 3s push + PII 마스킹 + `mock_wearable_batch.json` 100명 데이터 + `wearable_engine.py` 메모리 엔진 (운영 단계 교체 포인트 명시) |
+| 2026-05-20 | **USE_MOCK=false 실 AWS 연동** (354 계정) — dashboard `_cloud3_from_aws` (7 영역) + `_uploads_from_s3` (5건/KST/도메인별 today prefix) + `_ping_s3_ingestion` 다중 버킷 (CloudWatch NumberOfObjects/BucketSizeBytes) + `_ai_kpi4_from_aws` (Lambda 1h invocations) + dashboard/ai SSR USE_MOCK 분기 + JS register 즉시 1회 tick + 갱신 시각 표시 + Wearable 디바이스 배터리 제거 + Flask reloader 끔 |

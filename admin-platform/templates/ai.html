@@ -7,13 +7,13 @@
 
 <!-- 4 KPI -->
 <section class="section">
-    <div class="section-title">💎 핵심 추천 지표</div>
+    <div class="section-title">💎 핵심 추천 지표<span class="ts" id="ts-ai-kpi">갱신: --:--:--</span></div>
     <div class="grid grid-4">
         {% for k in kpi4 %}
         <div class="kpi" style="border-left-color: {{ k.accent }};">
             <div class="kpi-label">{{ k.label }}</div>
-            <div class="kpi-value" style="color: {{ k.accent }};">{{ k.value }}</div>
-            <div class="kpi-sub">{{ k.sub }}</div>
+            <div class="kpi-value" id="ai-kpi-value-{{ loop.index0 }}" style="color: {{ k.accent }};">{{ k.value }}</div>
+            <div class="kpi-sub"   id="ai-kpi-sub-{{ loop.index0 }}">{{ k.sub }}</div>
         </div>
         {% endfor %}
     </div>
@@ -246,4 +246,24 @@
 
     </div>
 </section>
+
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+    var kpiCount = {{ kpi4|length }};
+    AutoRefresh.register({
+        interval: 300000,  // 5분 — ai 지표는 일배치 + ad-hoc 성격
+        fetches: [{
+            url: '/api/ai/kpi4',
+            apply: function (data) {
+                if (!Array.isArray(data)) return;
+                for (var i = 0; i < kpiCount && i < data.length; i++) {
+                    AutoRefresh.setText('ai-kpi-value-' + i, data[i].value || '');
+                    AutoRefresh.setText('ai-kpi-sub-'   + i, data[i].sub   || '');
+                }
+                AutoRefresh.stampNow('ts-ai-kpi');
+            },
+        }],
+    });
+});
+</script>
 {% endblock %}

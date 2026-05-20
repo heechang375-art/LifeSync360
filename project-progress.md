@@ -775,6 +775,135 @@ ansible all -m ping \
 
 ## 플랫폼 / 어드민 개발 이력 (참고)
 
+### 2026-05-20
+
+**admin 자동 갱신 도입 — 화면 깜빡임 없는 JS 폴링**
+
+| 변경 | 내용 |
+|---|---|
+| `static/js/auto-refresh.js` 신설 | `AutoRefresh.register({interval, fetches[]})` — `Promise.allSettled` + `document.hidden` 감지 + inflight 가드 |
+| `base.html` | `auto-refresh.js` defer 로드 (모든 페이지 공통) |
+| `dashboard.html` | KPI 9 + Cloud 3 + S3 5 + uploads 표 → 60s 폴링 (`/api/dashboard/summary` · `/api/dashboard/cloud3` · `/api/s3/status` · `/api/dashboard/uploads`) |
+| `ai.html` | 상단 4 KPI → 300s 폴링 (`/api/ai/kpi4`) — 차트는 SVG 그대로 |
+| `admin-platform/app.py` | 신설 라우트 — `/api/dashboard/cloud3` · `/api/dashboard/uploads` · `/api/ai/kpi4` |
+| `docs/admin-data-flow.md` §6 | 6 소절 → 표 중심 6 소절로 압축 (한눈에 보이게) + 자동 갱신 구현 반영 |
+
+**깜빡임 방지 핵심**
+
+- `textContent !== next` 비교 후 다를 때만 setText → DOM mutation 0
+- 페이지 백그라운드 (`document.hidden=true`) 일 때 폴링 즉시 중지
+- 응답 에러는 `Promise.allSettled` 로 묶어 무시 — 사용자 화면 노출 X
+- 첫 화면은 SSR 그대로 (자동 갱신은 로드 후 적용)
+
+→ users.html 은 사용자 검색 입력 페이지라 자동 갱신 제외.
+→ SVG 차트 5종은 Jinja2 좌표 계산이라 자동 갱신 대상 X (Phase 3 에서 Chart.js 도입 시 처리).
+
+---
+
+**ops Wearable 재설계 — SSE 3s push + AHA/WHO 의학 기준 분류**
+
+기존 6 KPI (평균 심박/혈압/산소 등) 는 운영자가 액션 못 함 → 이상/이상 가능성 대상자만 추려서 노출로 재설계.
+
+| 변경 | 내용 |
+|---|---|
+| `admin-platform/wearable_engine.py` 신설 | 메모리 엔진 — `load_initial / tick / classify / snapshot / start_loop`. 운영 단계 Kinesis consumer + DynamoDB 로 교체 포인트 명시 |
+| `admin-platform/mock_wearable_batch.json` 신설 | Kinesis `wearable_batch_v1` 실 샘플 (100 records, ~31KB) |
+| `admin-platform/app.py` | wearable_engine 부팅 + 3s tick 백그라운드 thread + `/api/ops/wearable` (폴백) + `/stream/wearable` (SSE) + 기존 `/api/ops/wearable6` 제거 + ops() 핸들러 변경 + `threaded=True` |
+| `admin-platform/templates/ops.html` | 평균 KPI 6 제거 → KPI 5 (활성/송신율/RED/YELLOW/디바이스) + 표 3개 (건강 RED · 건강 YELLOW · 디바이스 배터리). SSE 구독 — 깜빡임 0 |
+| `static/js/auto-refresh.js` | `AutoRefresh.subscribe(url, handler)` SSE 헬퍼 추가 — visibilitychange 시 자동 disconnect/reconnect |
+
+**의학 기준 (`wearable_engine.classify`)**
+
+| 지표 | 정상 | YELLOW | RED | 근거 |
+|---|---|---|---|---|
+| heart_rate | 60-100 | 50-59 / 101-119 | <50 또는 ≥120 | AHA + ACC/AHA/HRS |
+| spo2_pct | ≥95% | 90-94% | <90% | WHO 임상 알람 |
+| stress_score | 0-50 | 51-75 | ≥76 | Garmin Firstbeat |
+| battery_pct | ≥30% | 15-29% | <15% | Fitrockr (별도 디바이스 알람) |
+
+**PII 마스킹** — admin 도 풀네임/풀 ID 안 보임
+- global_id → `G00023***` (앞 5자리 + 마스킹)
+- 이름 → `김**` (성씨는 global_id 끝자리로 결정적 매핑, 10개 성씨 round-robin)
+
+**운영 단계 교체 포인트** (`wearable_engine.py` docstring 명시)
+- `load_initial(json)` → Kinesis Stream consumer
+- `_state['latest']` 메모리 dict → DynamoDB `wearable_latest{global_id}` get_item
+- `_state['red/yellow/device']` deque → DynamoDB `anomaly_event` query 최근 N
+- `tick()` noise → 실 Kinesis 이벤트 수신 핸들러
+- `classify()` 는 그대로 사용 가능 (또는 Vertex AI risk_score 로 교체)
+
+---
+
+**admin USE_MOCK=false 실 AWS 연동 — 354 계정 (354493396671)**
+
+`USE_MOCK=false` + envar 세팅으로 boto3 호출 활성화. 작동 가능 영역만 실 데이터, 나머지 mock fallback.
+
+| 항목 | 변경 |
+|---|---|
+| dashboard `dashboard()` 핸들러 | USE_MOCK 분기 추가 — 첫 SSR 부터 `_stub_aurora_summary` / `_cloud3_from_aws` / `_s3_status_cards` / `_uploads_from_s3` 결과 사용 (다른 페이지 갔다 와도 mock 안 보임) |
+| ai `ai()` 핸들러 | `kpi4 = MOCKUP_AI_KPI4 if USE_MOCK else _ai_kpi4_from_aws()` |
+| `auto-refresh.js` `register` | 시작 즉시 1회 tick → interval 첫 tick 까지 60초 대기 X |
+| `/api/dashboard/cloud3` | USE_MOCK 분기 + `_cloud3_from_aws` — AWS 7 영역 (RDS/DDB/EC/ECS/ALB/S3/Lambda) + EC2 Tag Project=lifesync |
+| `/api/dashboard/uploads` | USE_MOCK 분기 + `_uploads_from_s3(limit=5)` — 도메인 8 × `Prefix={d}/dt={today}/` MaxKeys 10 (KST 기준 오늘) |
+| `/api/ai/kpi4` | USE_MOCK 분기 + Lambda CloudWatch 1h invocations (recommendation / ingest) |
+| `_ping_s3_ingestion` | lifesync-* 다중 버킷 합산 — CloudWatch `NumberOfObjects` / `BucketSizeBytes` metric + 오늘 dt KeyCount (KST 기준) |
+| KST 시간 표시 | uploads / S3 last_upload / Wearable SSE event_time 모두 `Asia/Seoul +09:00` (UTC `astimezone`) |
+| ops Wearable 디바이스 배터리 제거 | KPI 5→4 (활성/송신율/RED/YELLOW), 표 3→2. `wearable_engine.classify` 의 device 반환 + `_state['device']` deque 제거 |
+| 갱신 시각 표시 | 각 섹션 헤더 우측에 `갱신: HH:MM:SS` (`AutoRefresh.stampNow`). dashboard 4영역 + ai 1영역 + ops Wearable 3영역 |
+| Flask reloader 끔 | `debug=False, use_reloader=False` — SSE 연결 끊김 + 코드 수정 시 admin 재기동 안정 |
+
+**필요 envar** (USE_MOCK=false 시):
+```
+ADMIN_PASSWORD=admin123
+USE_MOCK=false
+AWS_REGION=ap-northeast-2
+LIFESYNC_RAW_S3_BUCKET=lifesync-raw
+DYNAMO_TABLE=lifesync_customer_result
+GLUE_JOB_PHYSICAL_NAME=lifesync-etl
+ONPREM_QUERY_LAMBDA=lifesync-onprem-customer-query
+```
+
+**작동 안 하는 영역 (Aurora private + DDB key 등 — 의도적 mock fallback)**
+- KPI 9 (`/api/dashboard/summary`) — Aurora 자격증명 + private subnet → mock baseline 유지
+- C360 점수 / 추천이력 — DDB HASH+RANGE 키 / Aurora SQL → API 500 → JS Promise.allSettled 무시
+- ai 차트 (7일 추이 / 도넛 등) — Aurora SQL 의존
+
+→ Aurora 자격증명: SSM Parameter Store 에는 없음 (`/lifesync/*` 다 확인). 평문 `Aws_iac/params/security.env` 의 `ChangeMe123!`. **다만 Aurora 가 `PubliclyAccessible=False` + SG inbound 가 특정 SG 만 허용 → 로컬 PC 에서 직접 connect 불가**. Phase 3 에서 SSM port forwarding / Bastion EC2 도입 시 활용.
+
+다음 라운드 후보:
+- C360 wearable 박스 신설
+- KPI #9 `Redis Cache 수` → CloudWatch `AWS/ElastiCache CurrItems` metric
+- ops VPC 카드 → 실 VPC CIDR + EC2 PrivateIp 표시
+- Cloud3 의 EC2 표시 0개 이슈 — EC2 Tag 키 확인 후 정정 (`aws:cloudformation:stack-name` 등)
+
+### 2026-05-19
+
+**lifesync360-platform 정리 (대규모 surgical refactor)**
+
+| 구분 | 변경 |
+|---|---|
+| 회원가입 흐름 제거 | `/api/register` + `/register` + `register.html` + `_resolve_global_id` + `PROFILE_SYNC_LAMBDA` 환경변수 |
+| JWT 발급 → 사전 발급 전환 | `make_jwt()` 제거 → `_get_preset_token()` (SSM `/lifesync360/jwt-token` 1회 캐시). 운영자가 토큰 사전 박음 |
+| 죽은 API 제거 (Group 1) | `/api/upgrade-actions` + `/api/my-products` + `MOCK_MY_PRODUCTS` + `MOCK_CONSENTED_KEYS` + `upgrade_actions_engine.py` 통째 |
+| 캠페인 복원 | `/api/campaigns` + `MOCK_CAMPAIGNS_BY_GRADE` 다시 살림 (홈 탭 캠페인 배너 표시 위해) |
+| 추천 top10 제한 | `_fetch_products` LIMIT 20 → 10, `_recommendations_mock` flat[:20] → flat[:10] |
+| ETL 책임 분리 | `_enrich_and_record` 가중치 계산 (`recommendation_score / grade_bonus / nba_bonus / cross_bonus`) 제거 — 정렬은 Aurora `priority_rank` 단일 출처 |
+| NBA 고객 노출 제거 | `/api/dashboard` + `/api/recommendations` 응답에서 `next_best_action` 제거, reason 의 "NBA \"...\" 매칭" / "cross_sell 보강" / "VIP 후보" 내부 용어 제거. 정렬은 내부에서만 사용 |
+| 홈 탭 재구성 | 추천 미리보기 (`home-rec-section`) 제거 → 등급별 캠페인 배너 영역 신설 |
+| 죽은 코드 청소 | `switchToRecommendTab()` JS 함수, `.home-rec-*` CSS 4개 클래스, `MOCKUP_*` 의 `next_best_action` 필드 등 |
+
+→ 결과: 17 API → 10 API + 6 페이지 (유령 API 0건, 모든 라우트가 화면 또는 ALB 연결).
+
+**설계서 V3 + spec 갱신**
+
+| 산출물 | 내용 |
+|---|---|
+| `lifesync360-platform 설계서 V3.xlsx` | admin V4 동일 스타일 (5컬럼 + 섹션 헤더 D9E1F2 + 컬럼 헤더 FFF2CC + 맑은 고딕 12pt). 6 시트 (인증 / 홈·점수·캠페인 / 추천·상품 / 이벤트·신청 / 동의·설정 / 인프라). 각 시트 하단에 admin V4 형식 API 호출 섹션 추가 |
+| `docs/build_platform_xlsx.py` | xlsx 빌드 스크립트 — SHEETS / API_SECTIONS dict 만 수정하면 재빌드. 행 높이 자동 계산 (한글 가중치 2, ASCII 1, 컬럼 너비 ×1.7) |
+| `docs/platform-api-spec.md` | V2 → V3 (655 → 558 lines). 매트릭스 / JWT 모델 (Parameter Store) / 6 도메인 상세 / 변경 이력 / 시연 시나리오 |
+
+**참조**: `docs/admin-data-flow.md §7` (실시간성 + 차트 구현 분석)
+
 ### 2026-04 초중순
 - LifeSync360 RFP v7, 아키텍처 설계 v2.8, 데이터셋 정의서 v9
 - lifesync360-platform Flask 초기 버전 (로그인/동의/홈/상품/설정)
@@ -1690,6 +1819,96 @@ def require_jwt(f):
 - platform `_resolve_global_id` (`PROFILE_SYNC_LAMBDA` 호출) 는 현재 호출처 없음 (죽은 코드) — register 흐름 부활 시 21 stack IAM 권한 추가 필요
 
 
+## 2026-05-18 ④ — RRN 제거 / Lambda 동적 발견 / 354 인벤토리 / API 테스트 체크리스트
+
+### 작업 요약
+
+**1. PrivateAPI RRN 제거** (운영 미수집 결정)
+
+| 파일 | 변경 |
+|---|---|
+| `onprem-prod-repo/.../app.py` | `RegisterRequest.rrn` 필드 삭제. `auth_register` INSERT 에서 `rrn_enc` 컬럼 미명시 (default NULL). `get_pii` 응답에서 `rrn` 키 + SELECT 컬럼 제외 |
+| `lambda/onprem_customer_query/handler.py` | `register` action payload 에서 `rrn` 필드 삭제 |
+| `lifesync360-platform/templates/register.html` | 주민등록번호 input 필드 + label + JS `payload.rrn` 제거 |
+
+→ admin/platform 운영자도 RRN 받을 일 없음. `customer_pii_secure.rrn_enc` 컬럼은 DDL nullable 유지 (기존 데이터 보존).
+
+**2. `_ping_lambda_metrics` 동적 발견 (옵션 C)**
+
+`admin app.py:316` — 하드코딩 4종 → `boto3 lambda.list_functions paginator` + `lifesync-` prefix 필터로 자동 발견. 신규 Lambda 배포 시 코드 변경 없이 자동 포함. `LAMBDA_PREFIX_FILTER` env override 가능.
+
+**3. 354 계정 AWS 인벤토리 스크립트 신설**
+
+`docs/aws-inventory-scan.ps1` (95줄) — PowerShell 한 줄 실행으로 25개 카테고리 (Lambda/DDB/RDS/Redis/S3/ECS/ALB/EC2/VPC/SG/TGW/VPN/Kinesis/EMR/Glue/EventBridge/CFN/IAM/Secrets/SSM 등) JSON 파일 저장. `docs/aws-inventory-YYYY-MM-DD/` 디렉토리 생성.
+
+**4. 354 계정 실 상태 진단** (2026-05-18 18:00 인벤토리)
+
+| 영역 | 배포 |
+|---|---|
+| S3 (`lifesync-raw` 외 14 버킷) | ✅ |
+| Lambda 5종 (`lifesync-wearable-stream` / `identity-enricher` / `recommendation-engine` / `batch-loader` / `ingest`) | ✅ |
+| CFN 12 stack (01-network / 02-security / 06-s3 / 09-streaming / 10-data-processing / 12-ec2 / 15·17·18 cicd / 22-identity-enricher / GHA OIDC 3종) | ✅ |
+| DynamoDB `lifesync_customer_result` | ❌ (테이블 없음 — 인벤토리 시점 기준) |
+| DynamoDB `analytics_segment_daily` / `analytics_demographic_daily` | ❌ (23 stack 미배포) |
+| Aurora MySQL | ❌ (`DBClusters: []`) |
+| ElastiCache Redis | ❌ (`CacheClusters: []`) |
+| ECS 클러스터 + ALB | ❌ (`clusterArns: []`, `LoadBalancers: []`) |
+| Lambda `lifesync-onprem-customer-query` | ❌ (V4 P4 r43 명시지만 미배포) |
+| analytics_aggregator / consent_snapshot_aggregator Lambda (③ 신규) | ❌ |
+
+→ **데이터 계층 + 컨테이너 계층 + onprem-query Lambda 미배포**. admin USE_MOCK=false 운영 검증은 인프라 종속 작업 후 가능.
+
+**5. admin app.py 의 `DYNAMO_TABLE` default 이름 불일치 발견**
+
+| 위치 | 값 |
+|---|---|
+| admin `app.py:13` default | `lifesync-scores` (hyphen) |
+| `taskdef.json` env | `lifesync-scores` |
+| 실제 운영 DDB 이름 | `lifesync_customer_result` (underscore, results.csv 기준) |
+
+→ env 명시 안 하면 `ResourceNotFoundException`. 운영 시 taskdef + admin default 둘 다 `lifesync_customer_result` 로 갱신 필요.
+
+**6. `docs/api-test-after-iac.md` 신설 (278줄)**
+
+IaC 재배포 후 admin USE_MOCK=false 단계별 API 검증 체크리스트:
+- §0 354 계정 현재 상태 매트릭스
+- §1 사전 확인 (자격증명 / 인벤토리)
+- §2 admin env 박기 (run-local.ps1)
+- §3 단계별 API 검증 6 step (S3/cloud → DDB → 분석 mart → Lambda → Aurora → ALB)
+- §4 운영 종속 작업 8건
+- §5 트러블슈팅 9건
+- §6 `_call_onprem` graceful fallback 권장 패치
+- §7 시나리오 한 줄 + §8 결과 보고 양식
+
+**7. 로컬 테스트 가이드 (③ 라운드 연속)**
+
+`docs/local-test-powershell.md` (380줄) — Windows PowerShell 기준 0~7 단계 절차 (자격증명 / venv / env / curl 검증 / VSCode 디버거 / SSM Port Forwarding / 종료 / 트러블슈팅 12건).
+
+### 상태
+
+| 항목 | 상태 |
+|---|---|
+| PrivateAPI RRN 제거 (RegisterRequest + INSERT + get_pii) | ✅ |
+| Lambda onprem_customer_query register action payload 정리 | ✅ |
+| register.html 주민번호 input 제거 | ✅ |
+| admin `_list_lifesync_lambdas` + 동적 발견 `_ping_lambda_metrics` | ✅ |
+| 354 계정 인벤토리 스크립트 (`docs/aws-inventory-scan.ps1`) | ✅ |
+| 354 계정 인벤토리 실행 + 결과 분석 (`docs/aws-inventory-2026-05-18/`) | ✅ |
+| `docs/api-test-after-iac.md` IaC 후 검증 체크리스트 | ✅ |
+| `docs/local-test-powershell.md` 로컬 PowerShell 가이드 | ✅ |
+| **`DYNAMO_TABLE` default 정합화** (admin default + taskdef → `lifesync_customer_result`) | ⏳ 결정 대기 |
+| **`_call_onprem` graceful fallback 패치** (Lambda 미배포 시 500 방지) | ⏳ 결정 대기 |
+| **Lambda `lifesync-onprem-customer-query` 354 배포** | ⏳ |
+| **Aurora / ElastiCache / DDB `lifesync_customer_result` / 23 stack / 25 stack / 21 stack (ECS) IaC 재배포** | ⏳ (내일 사용자 환경 작업) |
+
+### 메모
+
+- **354 계정 현재 인프라 부족 영역**: 데이터 계층 (Aurora/Redis/DDB lifesync_*) + 컨테이너 (ECS/ALB) + onprem-query Lambda + 라운드 ②③ 신규 Lambda 2종
+- **DDB 이름 불일치**: admin/taskdef default `lifesync-scores` vs 운영 `lifesync_customer_result` — env 명시로 우회 가능, 코드 default 정합화는 결정 대기
+- **AWS CLI 한국어 인코딩**: PowerShell 5.1 CP949 에서 Lambda description 의 em dash(`—`) → `cp949 codec` 에러로 일부 JSON 파일 텍스트 손상. 데이터는 유효, PowerShell 7 또는 `chcp 65001` 권장
+- **인벤토리 시점 DDB 결과 모순**: 첫 시도 `lifesync_customer_result + midasImageMetadata` → 인벤토리 시점 `midasImageMetadata` 만. 그 사이 테이블 삭제됐거나 region 차이 가능. 내일 재확인 필요
+
+
 ## 2026-05-18 ③ — 설계서 V4/V5 정합화 / DDB 이름 통일 / P1~P4 화면 명세 / API 응답 통일 / S3 동의 스냅샷 / admin Private EC2 결정
 
 ### 작업 요약
@@ -1836,3 +2055,105 @@ def require_jwt(f):
 - **응답 스키마 통일 효과**: 시연 검증된 화면이 USE_MOCK=false 운영 전환 후에도 동일 작동
 - **count_users_consented 정의**: 사용자 결정 **B 유지** (consent JOIN). `users.consent_completed` 컬럼은 운영에서 sync 코드 없어 default 'N' 고정 — 설계서 SQL 옵션 A 는 무용지물 상태
 - **admin 운영 환경**: Private Subnet EC2 단일, ECS 공개 admin 폐기 결정 — 인프라 변경 다음 라운드
+
+---
+
+## 2026-05-19 ④ — admin API 21/21 검증 완료 (100%) + PGA/24-stack IaC + Lambda/DDB 배포
+
+### 작업 요약
+
+**1. Aws_iac 5.zip 신설 — CFN 신규 2 stack**
+
+| 파일 | 역할 |
+|---|---|
+| `templates/01c-pga-hybrid.yaml` | Private Google Access via VPN/TGW (Route 53 private zone + admin subnet RT → `199.36.153.0/24` TGW) |
+| `templates/24-admin-windows-ec2.yaml` | Windows Server 2022 admin EC2 (Private Subnet, SSM Fleet Manager RDP, UserData Chocolatey + Python 3.11 + Git + Chrome) |
+| `scripts/infra/deploy-01c-pga-only.sh` | 01c 단독 배포 |
+| `scripts/infra/deploy-24-admin-windows-only.sh` | 24 단독 배포 |
+| `CHANGES-2026-05-19.md` 2차 보강 | 신규 stack 2종 변경 이력 |
+
+**2. PGA 셋업 가이드 3 파일 (docs/)**
+
+| 파일 | 역할 |
+|---|---|
+| `docs/gcp-pga-1-request-to-gcp-team.md` | GCP 담당자 작업 4가지 (Cloud Router 광고 / Cloud DNS / 서비스계정 / 키 JSON) — 그대로 전달 |
+| `docs/gcp-pga-2-aws-setup.ps1` | AWS Route 53 private zone + admin subnet RT 라우트 PowerShell |
+| `docs/gcp-pga-3-admin-env.ps1` | admin env 박기 + GCP SDK end-to-end 검증 (bigquery / aiplatform / monitoring) |
+
+**3. admin API 21/21 검증 — `docs/api-test-after-iac.md`**
+
+상단에 21 라우트 매트릭스 추가 + Step 1~5 별 표 갱신 + 10번 섹션 (재현 가능 명령 로그) 신설.
+
+| 카테고리 | 라우트 수 |
+|---|---|
+| ✅ V (실 데이터) | 13 (Step 1: 8 / Step 2: 2 / Step 3: 3) |
+| ⚠️ V (라우트 동작) | 7 (Step 4: 2 / Step 5: 5) |
+| ⚠️ data 0건 | 1 (`/api/emr/status`) |
+| ❌ 미배포 | 0 |
+| **합계** | **21 / 21 = 100%** |
+
+**4. AWS 신규 리소스 생성**
+
+| 리소스 | 상태 |
+|---|---|
+| DDB seed — `lifesync_customer_result` (G000000001~3) | 3건 PutItem |
+| DDB 신규 — `analytics_segment_daily` + seed 5건 | gender#M/F, age_band#20s/30s/40s |
+| DDB 신규 — `analytics_demographic_daily` + seed 5건 | age_band, gender, region |
+| Aurora — `lifesync360` DB 생성 | CREATE DATABASE (테이블 0) |
+| CFN — `lifesync-dev-24-admin-windows-ec2` | CREATE_COMPLETE (i-0a839dc320eb854d9, 10.0.10.204) |
+| Lambda — `lifesync-onprem-customer-query` | python3.11, Handler `handler.handler`, IAM basic execution |
+
+**5. admin 코드 변경 (최소)**
+
+| 위치 | 변경 |
+|---|---|
+| `admin-platform/app.py:1452-1471` `api_customer_ai_result` | DDB composite key (`global_id`+`update_time`) 발견 → `get_item` → `query(ScanIndexForward=False, Limit=1)` |
+| `admin-platform/mockup_data.py:377` `MOCKUP_DASH_KPI` | KPI8 → KPI9 + Redis Cache 카드 추가 (ImportError 해소) |
+| `admin-platform/mockup_data.py:636` `MOCKUP_NET_WEARABLE` | 5KPI → 6KPI (이상 이벤트 추가) |
+
+**6. 발견된 정합 이슈**
+
+| 이슈 | 위치 | 후속 |
+|---|---|---|
+| DDB lifesync_customer_result composite key 미지원 | admin app.py | ✅ 패치 완료 |
+| analytics 테이블 SK 이름 — admin code (segment_key) vs admin-data-flow.md (demographic_key) | admin-data-flow.md 1.3 | admin-data-flow.md 갱신 필요 |
+| `/api/admin/applications` 응답 폼 불일치 (`{"error":...}` vs `[]`) | admin app.py | 별도 라운드 — 응답 폼 통일 |
+| Aurora Secret `/lifesync/dev/db/master` value 미박힘 | 02-security CFN | Secret put-secret-value 또는 GenerateSecretString |
+| Lambda VPC config 없음 — On-Prem 접근 불가 | lifesync-onprem-customer-query | 별도 라운드 — VPC + SG + VPN UP |
+| SG description 한글 — AWS EC2 비허용 | 24 stack | 영문 변환 (24-stack 적용 완료) |
+
+### 상태
+
+| 항목 | 상태 |
+|---|---|
+| Aws_iac 5.zip 생성 (01c PGA + 24 admin Windows EC2 CFN) | ✅ |
+| docs/gcp-pga-1~3 (PGA 셋업 가이드 3 파일) | ✅ |
+| api-test-after-iac.md 상단 21 라우트 매트릭스 + 검증 로그 | ✅ |
+| DDB seed 박기 (lifesync_customer_result 3 + analytics 2 테이블 10) | ✅ |
+| admin app.py composite key query 패치 | ✅ |
+| Aurora SSM tunnel + `CREATE DATABASE lifesync360` | ✅ |
+| 24-stack Windows EC2 CFN deploy | ✅ |
+| Lambda `lifesync-onprem-customer-query` 배포 | ✅ |
+| admin API 21 / 21 V 박음 (100%) | ✅ ⭐ |
+| **23 stack 정식** (analytics_aggregator Lambda + EventBridge cron) | ⏳ |
+| **Service-DB 마이그레이션** (`Service-DB/run-aurora-migration.py` Python pymysql 변환 신설 + 실행) — Step 5 ⚠️ V 4개 ✅ V 승격 + Step 3 recommend-trend 승격 | ✅ |
+| **Lambda VPC config + On-Prem VPN UP + 3 VM** | ⏳ |
+| **GCP 측 셋업** (Cloud Router 광고 + Cloud DNS + 서비스계정) | ⏳ |
+| **`/api/admin/applications` 응답 폼 정합** | ⏳ |
+| **admin-data-flow.md SK 이름 정합** (demographic_key → segment_key) | ⏳ |
+| **Aurora Secret 자동 set** (02-security CFN GenerateSecretString) | ⏳ |
+
+### 메모
+
+- **검증 매트릭스 위치**: `docs/api-test-after-iac.md` 상단 + Section 10 (재현 가능 명령 로그) — 21 라우트 + 검증 명령 + 결과 핵심
+- **시연 admin 모드**: `USE_MOCK=true` 로 5001 띄움 (PID 변동) — GCP 담당자 시연 시 그대로 사용
+- **24-stack Windows EC2 접속**: AWS Console → Systems Manager → Fleet Manager → `lifesync-dev-admin-ec2` → Connect with Remote Desktop
+- **Lambda Handler 함수명**: `handler.handler` (lambda_handler 아님 — `handler.py` 의 `def handler(event, context)`)
+- **DDB composite key 의미**: 운영 시 Cloud Run lifesync-result-bridge 가 일배치마다 새 update_time 으로 PutItem → 시계열 누적. admin 은 항상 최신 1건 (query Limit=1)
+- **analytics 테이블 SK 이름 통일**: admin code 가 두 테이블 다 `segment_key` 사용 → DDB schema 도 동일 박음 (admin-data-flow.md 의 `demographic_key` 표기 갱신 필요)
+- **온프레미스 호출 한계**: VPC config + VPN UP + VirtualBox VM 3대 (ls-db / ls-token / ls-api) 모두 필요. 현재 graceful fail 응답 폼만 검증 (⚠️ V)
+- **다음 라운드 우선순위 후보**:
+  1. Service-DB 마이그레이션 (24-stack 안에서) — Step 5 ⚠️ V 5개 → ✅ V 5개 승격
+  2. 23 stack 정식 배포 (analytics_aggregator Lambda + EventBridge) — Step 3 정식
+  3. GCP 측 셋업 (담당자 의존) — Step 1 cloud/status + Step 2 vertex_metrics
+  4. Lambda VPC config + On-Prem 연결 — Step 4 정식

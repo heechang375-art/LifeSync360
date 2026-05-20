@@ -194,6 +194,7 @@ MOCKUP_WEARABLE_REALTIME = [
 # ── 운영 모니터링 — Local Lab (VirtualBox / Docker) ───────
 # 아키텍처 V3.7 Lite 기준 K8s 없음. VirtualBox 4 + Docker 만 노출.
 MOCKUP_LOCAL_LAB = [
+    {'env': 'VirtualBox · ls-vpngw',  'state': 'Running', 'note': 'strongSwan VPN · 192.168.56.10'},
     {'env': 'VirtualBox · ls-db',     'state': 'Running', 'note': 'MySQL 8.0 · 192.168.56.11'},
     {'env': 'VirtualBox · ls-token',  'state': 'Running', 'note': 'Tokenization · 192.168.56.12'},
     {'env': 'VirtualBox · ls-api',    'state': 'Running', 'note': 'Private API + cron · 192.168.56.13'},
@@ -372,21 +373,20 @@ MOCKUP_BACKEND_SERVICES = [
 # 상단 탭(전체현황 / Customer 360 / AI 추천 / Network) 4페이지
 # ═══════════════════════════════════════════════════════════════════════════
 
-# ── P1 전체현황 — 9 KPI (3×3) — 설계서 V5 순서 ────────────
-# Row 1 (고객): 통합/가입/분석대상  Row 2 (추천 누적): 이력/로그/Cache  Row 3 (실시간 지표): CTR/CVR/AI상태
+# ── P1 전체현황 — 9 KPI (Redis Cache 포함) ────────────────
 MOCKUP_DASH_KPI = [
-    # Row 1: 고객 (1M / 300K / 60K)
-    {'label': '통합 고객 수',         'value': '1,000,000',   'sub': '전체 100% · On-Prem master_customer',     'accent': '#3b82f6', 'is_status': False},
-    {'label': '플랫폼 가입자',        'value': '300,000',     'sub': '전체의 30% · On-Prem users',              'accent': '#f59e0b', 'is_status': False},
-    {'label': '분석 대상 고객',       'value': '60,000',      'sub': '가입자의 20% · 동의 완료',                'accent': '#14b8a6', 'is_status': False},
-    # Row 2: 추천 누적 (이력/로그/Cache)
-    {'label': '누적 추천 이력',       'value': '487,290',     'sub': 'Aurora customer_recommend_history',       'accent': '#1e293b', 'is_status': False},
-    {'label': '누적 활동 로그',       'value': '12.8M',       'sub': 'Aurora customer_dashboard_log',           'accent': '#f59e0b', 'is_status': False},
-    {'label': 'Redis 추천 Cache 수',  'value': '54,820 keys', 'sub': 'DBSIZE · 최대 60,000 키 · rec:{global_id}', 'accent': '#8b5cf6', 'is_status': False},
-    # Row 3: 실시간 지표 (CTR/CVR/AI상태)
-    {'label': '추천 CTR (클릭률)',    'value': '14.2%',       'sub': 'SUM(clicked) / COUNT(*) · 실시간',        'accent': '#16a34a', 'is_status': False},
-    {'label': '구매 전환율 (CVR)',    'value': '9.8%',        'sub': 'SUM(purchased) / SUM(clicked) · 실시간',  'accent': '#3b82f6', 'is_status': False},
-    {'label': 'AI 추천 상태',         'value': 'Vertex AI',   'sub': 'DynamoDB · 오늘 04:30 갱신',              'accent': '#16a34a', 'is_status': True},
+    # Row 1: 고객 / 추천 현황
+    {'label': '통합 고객 수',      'value': '1,000,000',   'sub': '전체 100% · On-Prem master_customer',     'accent': '#3b82f6', 'is_status': False},
+    {'label': '플랫폼 가입자',     'value': '300,000',     'sub': '전체의 30% · On-Prem users',              'accent': '#f59e0b', 'is_status': False},
+    {'label': '분석 대상 고객',    'value': '60,000',      'sub': '가입자의 20% · 동의 완료',                'accent': '#14b8a6', 'is_status': False},
+    {'label': 'AI 추천 상태',      'value': 'Vertex AI',   'sub': 'DynamoDB · 오늘 04:30 갱신',              'accent': '#16a34a', 'is_status': True},
+    # Row 2: 추천 성과
+    {'label': '누적 추천 이력',    'value': '487,290',     'sub': 'Aurora customer_recommend_history',       'accent': '#1e293b', 'is_status': False},
+    {'label': '누적 활동 로그',    'value': '12.8M',       'sub': 'Aurora customer_dashboard_log',           'accent': '#f59e0b', 'is_status': False},
+    {'label': '추천 CTR (클릭률)', 'value': '14.2%',       'sub': 'SUM(clicked) / COUNT(*) · 실시간',        'accent': '#16a34a', 'is_status': False},
+    {'label': '구매 전환율 (CVR)', 'value': '9.8%',        'sub': 'SUM(purchased) / SUM(clicked) · 실시간',  'accent': '#3b82f6', 'is_status': False},
+    # Row 3: 인프라
+    {'label': 'Redis Cache 수',    'value': '54,890',      'sub': 'rec:{global_id} · DBSIZE · TTL 6h',       'accent': '#dc2626', 'is_status': False},
 ]
 
 # ── P1 — Cloud 3카드 (AWS / GCP / On-Prem) ────────────────
@@ -459,9 +459,8 @@ MOCKUP_C360_NBA = {
     'updated_at':    '2026-05-17 04:00 (오늘)',
 }
 
-# 설계서 V5 P2 row 29-31 — On-Prem customer_360_profile 정적 룰 기반 점수
 MOCKUP_C360_PRECISION = [
-    {'label': '금융', 'value': 78, 'color': '#1e293b'},
+    {'label': '행동', 'value': 82, 'color': '#1e293b'},
     {'label': '자산', 'value': 75, 'color': '#1e293b'},
     {'label': '위험', 'value': 12, 'color': '#dc2626'},
 ]
@@ -564,7 +563,7 @@ MOCKUP_NET_TOPOLOGY = {
         {'name': 'Group VM VPC', 'bg': '#dcfce7', 'border': '#16a34a', 'lines': ['BANK/CARD/SEC/INS/', 'ONINS/HLT/HOS EC2,', 'Wearable EC2']},
     ],
     'gcp':    {'name': 'GCP',                'bg': '#fce7f3', 'border': '#ec4899', 'lines': ['VPC + PSC Endpoint', 'BigQuery / Vertex AI', 'Cloud Run']},
-    'onprem': {'name': 'On-Prem (VirtualBox)','bg': '#e0e7ff', 'border': '#6366f1', 'lines': ['Local Lab', 'ls-db (MySQL)', 'ls-token (Tokenization)', 'ls-api (PrivateAPI)']},
+    'onprem': {'name': 'On-Prem (VirtualBox)','bg': '#e0e7ff', 'border': '#6366f1', 'lines': ['Local Lab', 'ls-db (MySQL)', 'ls-tokenz', 'ls-api (PrivateAPI)']},
 }
 
 MOCKUP_NET_AWS_PLATFORM = {
@@ -627,21 +626,20 @@ MOCKUP_NET_GCP = {
 MOCKUP_NET_ONPREM = {
     'title': 'On-Prem VirtualBox', 'badge': 'Local Lab', 'badge_bg': '#e0e7ff', 'badge_color': '#4f46e5',
     'rows': [
-        {'name': 'VirtualBox VM (5)',    'state': 'Running',   'state_color': '#16a34a', 'sub': 'all VMs running'},
+        {'name': 'VirtualBox VM (3)',    'state': 'Running',   'state_color': '#16a34a', 'sub': 'all VMs running'},
         {'name': 'Local MySQL',          'state': 'Healthy',   'state_color': '#16a34a', 'sub': '3306 · lifesync 8.0'},
         {'name': 'Tokenization Service', 'state': 'Reach OK',  'state_color': '#16a34a', 'sub': '192.168.56.12 / 7000'},
         {'name': 'PrivateAPI',           'state': 'Active',    'state_color': '#16a34a', 'sub': '192.168.56.13 / 8000'},
     ],
 }
 
-# 설계서 V5 P4 row 47-52 — Wearable 6 지표 (심박/혈압/SpO2/운동량/이상이벤트/송신)
 MOCKUP_NET_WEARABLE = [
-    {'icon': '❤', 'label': '심박수',       'value': '72',       'sub': 'bpm'},
-    {'icon': '🩺','label': '혈압',         'value': '118 / 76', 'sub': 'mmHg'},
-    {'icon': '🫁','label': '산소 포화도',  'value': '98',       'sub': '%'},
-    {'icon': '🚶','label': '운동량',       'value': '7,428',    'sub': 'steps'},
-    {'icon': '🚨','label': '이상 이벤트',  'value': '2',        'sub': '24h Alert · SNS'},
-    {'icon': '📡','label': '데이터 송신',   'value': '100%',     'sub': 'Kinesis PutRecord'},
+    {'icon': '❤', 'label': '심박수',       'value': '72',      'sub': 'bpm'},
+    {'icon': '🩺','label': '혈압',         'value': '118 / 76','sub': 'mmHg'},
+    {'icon': '🫁','label': '산소 포화도',  'value': '98',      'sub': '%'},
+    {'icon': '🚶','label': '운동량',       'value': '7,428',   'sub': 'steps'},
+    {'icon': '⚠','label': '데이터 송신',   'value': '100%',    'sub': '5분 평균'},
+    {'icon': '🚨','label': '이상 이벤트',  'value': '3',       'sub': 'SNS 알림 · 24h 누적'},
 ]
 
 MOCKUP_NET_API_ENDPOINTS = [
